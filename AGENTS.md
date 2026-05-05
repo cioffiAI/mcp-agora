@@ -1,5 +1,15 @@
 # MCP Agora — Agent Instructions
 
+## Memory & Knowledge (Agora stesso)
+
+Agora è un MCP server con memoria persistente cross-agente. Quando lavori in questo progetto:
+
+1. **Prima di cercare soluzioni esterne** → chiama `agora_query` per vedere se informazioni utili sono già state salvate
+2. **Dopo aver risolto un problema** → chiama `agora_save` per memorizzare la soluzione (con tags)
+3. **Le informazioni sono condivise tra tutti gli agenti** — Claude Code, Codex, ChatGPT, Gemini CLI
+
+La ricerca è semantica (embedding a 384 dimensioni), non per keyword. ChromaDB usa un indice ANN (HNSW) che trova le entry più simili in **O(log n)** — anche con 10.000 entry la risposta arriva in <50ms.
+
 ## Project Overview
 
 MCP Agora is a **portfolio/learning project** implementing an MCP Server with cross-agent persistent memory. It is NOT a product — it is not competing with ContextForge (IBM), MetaMCP, AutoMem, or mcp-memory-service.
