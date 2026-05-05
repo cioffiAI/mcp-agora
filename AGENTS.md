@@ -22,17 +22,15 @@ Build an MCP Server that allows AI agents (Claude Code, Codex, ChatGPT, Gemini C
 - Share memory across agents and sessions
 - Cache frequent queries in-memory (TTLCache)
 
-### Non-goals (do NOT implement in Phase 1 or 2)
+### Non-goals (Phase 1-2; some implemented in Phase 3)
 
 - Semantic broadcasting / fan-out
-- HTTP connector (STDIO only in Phase 2)
-- SQLite db layer (provenance, token_usage, schema)
+- **Phase 3: SQLite db layer (provenance, agent registry, L2 cache)**
 - Chunking (save short entries only, ≤256 word pieces)
-- Cache L2 persistent disk
-- Streamable HTTP transport (STDIO only)
+- **Phase 3: Cache L2 persistent disk (SQLite-backed, 24h TTL)**
 - Docker, RBAC, auth, scaling
 
-## Architecture Stack (Phase 2)
+## Architecture Stack (Phase 3)
 
 ```
 Python 3.13+  │  uv 0.11+
@@ -42,6 +40,7 @@ sentence-transformers  │  all-MiniLM-L6-v2 (384d)
 cachetools    │  TTLCache (1000 entries, 5min TTL)
 pyyaml        │  config.yaml
 pytest        │  pytest-asyncio
+SQLite3       │  stdlib (provenance, agent registry, L2 cache)
 ```
 
 ## Directory Structure
@@ -72,14 +71,20 @@ mcp-agora/
 │   ├── memory/
 │   │   ├── __init__.py
 │   │   └── vector_store.py  # ChromaDB PersistentClient wrapper
-│   └── cache/
+│   ├── cache/
+│   │   ├── __init__.py
+│   │   ├── l1_memory.py     # TTLCache in-memory
+│   │   └── l2_cache.py      # SQLite-backed persistent cache (Phase 3)
+│   └── db/
 │       ├── __init__.py
-│       └── l1_memory.py     # TTLCache in-memory
+│       └── database.py      # SQLite: agents, provenance, L2 cache (Phase 3)
 ├── tests/
 │   ├── __init__.py
 │   ├── test_embedding.py
 │   ├── test_memory.py
 │   ├── test_cache.py
+│   ├── test_l2_cache.py     # L2 persistent cache tests (Phase 3)
+│   ├── test_provenance.py   # Provenance + agent registry tests (Phase 3)
 │   ├── test_protocol.py
 │   ├── test_routing.py
 │   ├── test_connectors.py
@@ -92,7 +97,7 @@ mcp-agora/
 
 ### FastMCP (NOT low-level Server)
 
-Use `FastMCP` from `mcp.server.fastmcp`. Do NOT use `mcp.server.Server` directly in Phase 1 or 2.
+Use `FastMCP` from `mcp.server.fastmcp`. Do NOT use `mcp.server.Server` directly in Phase 1, 2, or 3.
 
 ```python
 from mcp.server.fastmcp import FastMCP
@@ -100,7 +105,7 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("Agora")
 
 @mcp.tool()
-def agora_save(content: str, tags: list[str] | None = None) -> dict:
+def agora_save(content: str, tags: list[str] | None = None, agent: str | None = None, session: str | None = None, confidence: float = 0.5) -> dict:
     ...
 
 @mcp.tool()
@@ -112,7 +117,23 @@ async def agora_route(target: str, tool: str, arguments: dict | None = None) -> 
     ...
 
 @mcp.tool()
+async def agora_broadcast(tool: str, arguments: dict | None = None) -> dict:
+    ...
+
+@mcp.tool()
 def agora_backends() -> dict:
+    ...
+
+@mcp.tool()
+def agora_crossref(query: str = "", entry_id: str = "", top_k: int = 5) -> dict:
+    ...
+
+@mcp.tool()
+def agora_forget(entry_ids: list[str] | None = None, tags: list[str] | None = None, agent: str | None = None, dry_run: bool = False) -> dict:
+    ...
+
+@mcp.tool()
+def agora_status() -> dict:
     ...
 ```
 
@@ -144,7 +165,7 @@ def agora_backends() -> dict:
       "model": "all-MiniLM-L6-v2"
   }, sort_keys=True))
   ```
-- On `agora.save`: clear ALL query cache (simple, safe)
+- On `agora.save`: clear ALL query cache (L1 + L2) (simple, safe)
 
 ### Config
 
@@ -172,6 +193,8 @@ def agora_backends() -> dict:
    - `test_memory.py`: add → query → delete → verify
    - `test_cache.py`: set → get → expire → stats
    - `test_routing.py`: cosine similarity, exact/semantic/no match, warmup
+   - `test_l2_cache.py`: L2 set/get/expiry/hit_count/stats/clear (Phase 3)
+   - `test_provenance.py`: agent registry, provenance add/get/list/delete (Phase 3)
 
 2. **Integration test** (same process, direct function calls):
    - `test_protocol.py`: call `save_knowledge()` then `query_knowledge()` directly
@@ -179,7 +202,7 @@ def agora_backends() -> dict:
 
 3. **MCP smoke test** (via `mcp.ClientSession`):
    - `test_protocol.py`: `tools/list` returns correct tool names, `tools/call` succeeds
-   - `test_mcp_smoke.py`: smoke, multiple entries, stress, routing, status
+   - `test_mcp_smoke.py`: smoke, multiple entries, stress, routing, status, crossref, forget
 
 4. **Manual test** with Claude Code/Codex
 

@@ -1,13 +1,16 @@
 agora:
   name: "Agora"
-  version: "0.2.0"
+  version: "0.3.0"
 
 storage:
   chroma_path: "~/.agora/chroma"
+  db_path: "~/.agora/agora.db"
 
 cache:
   l1_max_entries: 1000
   l1_ttl_seconds: 300
+  l2_max_entries: 10000
+  l2_ttl_seconds: 86400
 
 embedding:
   provider: "sentence-transformers"

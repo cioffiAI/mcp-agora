@@ -4,7 +4,9 @@ import tempfile
 import pytest
 
 from agora.cache.l1_memory import L1Cache
+from agora.cache.l2_cache import L2Cache
 from agora.config import Config
+from agora.db.database import Database
 from agora.embedding.sentence import SentenceTransformerProvider
 from agora.memory.vector_store import VectorStore
 
@@ -14,20 +16,25 @@ def fresh_server():
     tmp = tempfile.mkdtemp()
     cfg = Config(
         chroma_path=tmp,
+        db_path=tmp + "/agora.db",
         l1_max_entries=100,
         l1_ttl_seconds=60,
     )
     embedding = SentenceTransformerProvider()
     vector_store = VectorStore(path=cfg.chroma_path, embedding_provider=embedding)
     l1_cache = L1Cache(maxsize=cfg.l1_max_entries, ttl=cfg.l1_ttl_seconds)
-    yield cfg, embedding, vector_store, l1_cache
+    db = Database(path=cfg.db_path)
+    l2_cache = L2Cache(db=db, ttl_seconds=3600)
+    yield cfg, embedding, vector_store, l1_cache, db, l2_cache
     del vector_store
     del l1_cache
+    del db
+    del l2_cache
     gc.collect()
 
 
 def test_save_knowledge(fresh_server):
-    _, embedding, vs, cache = fresh_server
+    _, embedding, vs, cache, db, l2_cache = fresh_server
     from datetime import datetime, timezone
     import uuid
 
@@ -40,7 +47,7 @@ def test_save_knowledge(fresh_server):
 
 
 def test_save_then_query(fresh_server):
-    _, embedding, vs, cache = fresh_server
+    _, embedding, vs, cache, db, l2_cache = fresh_server
 
     content = "Agora is an MCP server for persistent cross-agent memory"
     import uuid
@@ -56,7 +63,7 @@ def test_save_then_query(fresh_server):
 
 
 def test_query_returns_correct_format(fresh_server):
-    _, embedding, vs, cache = fresh_server
+    _, embedding, vs, cache, db, l2_cache = fresh_server
 
     vs.add(texts=["test knowledge entry"])
 
@@ -71,7 +78,7 @@ def test_query_returns_correct_format(fresh_server):
 
 
 def test_cache_hit_after_query(fresh_server):
-    _, embedding, vs, cache = fresh_server
+    _, embedding, vs, cache, db, l2_cache = fresh_server
 
     vs.add(texts=["cached knowledge"])
     query = "knowledge retrieval"
@@ -91,3 +98,51 @@ def test_cache_hit_after_query(fresh_server):
     assert result is not None
     stats = cache.stats()
     assert stats["hit_count"] >= 1
+
+
+def test_l2_cache_fallback(fresh_server):
+    """L2 cache stores and returns results when L1 misses and L2 hits."""
+    _, embedding, vs, l1_cache, db, l2_cache = fresh_server
+
+    vs.add(texts=["PostgreSQL BRIN indexes are useful for large tables"])
+
+    query = "database indexing large tables"
+    l2_cache.set(
+        tool="agora.query",
+        query=query,
+        top_k=5,
+        model="all-MiniLM-L6-v2",
+        value={"query": query, "results": [{"text": "l2 cached result", "score": 0.9}], "cached": False},
+    )
+
+    result = l2_cache.get(
+        tool="agora.query",
+        query=query,
+        top_k=5,
+        model="all-MiniLM-L6-v2",
+    )
+    assert result is not None
+    assert result["results"][0]["text"] == "l2 cached result"
+    stats = l2_cache.stats()
+    assert stats["total_hits"] >= 1
+
+
+def test_save_with_provenance(fresh_server):
+    _, embedding, vs, cache, db, l2_cache = fresh_server
+
+    content = "MCP Agora is a cross-agent memory server"
+    from datetime import datetime, timezone
+    import uuid
+
+    entry_id = f"mem_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    metadata = {"tags": "mcp,memory", "created_at": datetime.now(timezone.utc).isoformat(), "agent": "codex"}
+    vs.add(texts=[content], metadata=[metadata], ids=[entry_id])
+    db.register_agent("codex")
+    db.add_provenance(entry_id=entry_id, source_agent="codex", source_session="session-abc", confidence=0.9)
+    cache.clear()
+
+    prov = db.get_provenance(entry_id)
+    assert prov is not None
+    assert prov["source_agent"] == "codex"
+    assert prov["source_session"] == "session-abc"
+    assert prov["confidence"] == 0.9

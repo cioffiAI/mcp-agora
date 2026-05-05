@@ -15,10 +15,11 @@ def mcp_env():
     tmp = tempfile.mkdtemp()
     chroma_path = Path(tmp) / "chroma"
     chroma_path.mkdir()
+    db_path = Path(tmp) / "agora.db"
     config = {
-        "agora": {"name": "Agora", "version": "0.1.0"},
-        "storage": {"chroma_path": str(chroma_path)},
-        "cache": {"l1_max_entries": 100, "l1_ttl_seconds": 60},
+        "agora": {"name": "Agora", "version": "0.3.0"},
+        "storage": {"chroma_path": str(chroma_path), "db_path": str(db_path)},
+        "cache": {"l1_max_entries": 100, "l1_ttl_seconds": 60, "l2_max_entries": 100, "l2_ttl_seconds": 3600},
         "embedding": {"provider": "sentence-transformers", "model": "all-MiniLM-L6-v2"},
     }
     config_path = Path(tmp) / "config.yaml"
@@ -53,11 +54,15 @@ async def test_mcp_full_smoke(server_params):
             assert "agora_route" in tool_names
             assert "agora_backends" in tool_names
             assert "agora_broadcast" in tool_names
+            assert "agora_crossref" in tool_names
+            assert "agora_forget" in tool_names
 
             # --- agora_status (empty) ---
             status = json.loads((await session.call_tool("agora_status", arguments={})).content[0].text)
             assert status["server"] == "Agora"
             assert status["memory_entries"] == 0
+            assert "agents" in status
+            assert "db_size_bytes" in status
 
             # --- agora_save ---
             save_result = await session.call_tool(
@@ -89,7 +94,9 @@ async def test_mcp_full_smoke(server_params):
             # --- agora_status (now with 1 entry) ---
             status2 = json.loads((await session.call_tool("agora_status", arguments={})).content[0].text)
             assert status2["memory_entries"] == 1
-            assert status2["cache_stats"]["hit_count"] >= 1
+            assert status2["cache_stats"]["l1"]["hit_count"] >= 1
+            assert "l2" in status2["cache_stats"]
+            assert status2["agents"]["total"] >= 1
 
             # --- save clears cache, so next query is fresh ---
             await session.call_tool("agora_save", arguments={"content": "Redis Streams support consumer groups"})
@@ -98,6 +105,46 @@ async def test_mcp_full_smoke(server_params):
                 arguments={"query": "PostgreSQL indexing performance", "top_k": 5},
             )
             assert json.loads(after_save.content[0].text)["cached"] is False
+
+            # --- agora_crossref by query ---
+            crossref_q = await session.call_tool(
+                "agora_crossref",
+                arguments={"query": "PostgreSQL performance", "top_k": 3},
+            )
+            cr_q = json.loads(crossref_q.content[0].text)
+            assert cr_q["mode"] == "query"
+            assert cr_q["total_entries"] >= 1
+            assert "cross_agent_groups" in cr_q
+
+            # --- agora_crossref by entry_id ---
+            crossref_id = await session.call_tool(
+                "agora_crossref",
+                arguments={"entry_id": saved["id"], "top_k": 3},
+            )
+            cr_id = json.loads(crossref_id.content[0].text)
+            assert cr_id["mode"] == "entry_id"
+            assert cr_id["source_entry_id"] == saved["id"]
+
+            # --- agora_forget with dry_run ---
+            forget_dry = await session.call_tool(
+                "agora_forget",
+                arguments={"entry_ids": [saved["id"]], "dry_run": True},
+            )
+            fd = json.loads(forget_dry.content[0].text)
+            assert fd["dry_run"] is True
+            assert fd["forgotten"] == 0
+
+            # --- agora_forget real ---
+            forget_real = await session.call_tool(
+                "agora_forget",
+                arguments={"entry_ids": [saved["id"]]},
+            )
+            fr = json.loads(forget_real.content[0].text)
+            assert fr["forgotten"] >= 1
+
+            # Verify status reflects deletion
+            status3 = json.loads((await session.call_tool("agora_status", arguments={})).content[0].text)
+            assert status3["memory_entries"] == 1  # Redis entry still there
 
 
 @pytest.mark.asyncio
@@ -235,7 +282,7 @@ async def test_mcp_stress_save_and_query(server_params):
             # Status check
             status = json.loads((await session.call_tool("agora_status", arguments={})).content[0].text)
             assert status["memory_entries"] == 15
-            assert status["cache_stats"]["hit_count"] >= 2
+            assert status["cache_stats"]["l1"]["hit_count"] >= 2
 
             # Save clears cache — verify by repeating a previously cached query
             await session.call_tool(
@@ -263,10 +310,11 @@ def mcp_env_with_backends():
     tmp = tempfile.mkdtemp()
     chroma_path = Path(tmp) / "chroma"
     chroma_path.mkdir()
+    db_path = Path(tmp) / "agora.db"
     config = {
-        "agora": {"name": "Agora", "version": "0.1.0"},
-        "storage": {"chroma_path": str(chroma_path)},
-        "cache": {"l1_max_entries": 100, "l1_ttl_seconds": 60},
+        "agora": {"name": "Agora", "version": "0.3.0"},
+        "storage": {"chroma_path": str(chroma_path), "db_path": str(db_path)},
+        "cache": {"l1_max_entries": 100, "l1_ttl_seconds": 60, "l2_max_entries": 100, "l2_ttl_seconds": 3600},
         "embedding": {"provider": "sentence-transformers", "model": "all-MiniLM-L6-v2"},
         "backends": [
             {
