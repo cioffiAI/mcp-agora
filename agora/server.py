@@ -7,6 +7,8 @@ from agora.cache.l1_memory import L1Cache
 from agora.config import Config
 from agora.embedding.sentence import SentenceTransformerProvider
 from agora.memory.vector_store import VectorStore
+from agora.registry import BackendRegistry
+from agora.routing.router import Router
 
 
 def create_server(config: Config | None = None) -> FastMCP:
@@ -20,6 +22,13 @@ def create_server(config: Config | None = None) -> FastMCP:
         embedding_provider=embedding,
     )
     l1_cache = L1Cache(maxsize=cfg.l1_max_entries, ttl=cfg.l1_ttl_seconds)
+
+    registry = BackendRegistry()
+    for b in cfg.backends:
+        registry.register(b)
+
+    router = Router(registry, embedding)
+    router.warmup()
 
     mcp = FastMCP(cfg.name)
 
@@ -63,11 +72,56 @@ def create_server(config: Config | None = None) -> FastMCP:
         return response
 
     @mcp.tool()
+    async def agora_route(target: str, tool: str, arguments: dict | None = None) -> dict:
+        connector, method, score = router.route(target)
+        if connector is None:
+            return {
+                "error": f"No backend matched '{target}'",
+                "method": method,
+                "score": round(score, 4),
+            }
+        try:
+            result = await connector.call_tool(tool, arguments or {})
+            return {
+                "backend": connector.name,
+                "tool": tool,
+                "method": method,
+                "score": round(score, 4),
+                "content": result["content"],
+                "isError": result.get("isError", False),
+            }
+        except Exception as e:
+            return {
+                "error": f"Tool '{tool}' on backend '{connector.name}' failed: {e}",
+                "backend": connector.name,
+                "tool": tool,
+                "method": method,
+            }
+
+    @mcp.tool()
+    def agora_backends() -> dict:
+        backends = []
+        for b in registry.list_backends():
+            backends.append({
+                "name": b.name,
+                "description": b.description,
+                "transport": b.transport,
+                "read_only": b.read_only,
+                "connected": registry.is_connected(b.name),
+            })
+        return {"backends": backends}
+
+    @mcp.tool()
     def agora_status() -> dict:
+        connected_count = len(registry.list_connected())
         return {
             "server": "Agora",
             "memory_entries": vector_store.count(),
             "cache_stats": l1_cache.stats(),
+            "backends": {
+                "total": len(registry.list_backends()),
+                "connected": connected_count,
+            },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 

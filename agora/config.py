@@ -14,6 +14,17 @@ _DEFAULT_CONFIG = {
 
 
 @dataclass
+class BackendConfig:
+    name: str
+    transport: str = "stdio"
+    command: list[str] | None = None
+    url: str | None = None
+    description: str = ""
+    read_only: bool = False
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class Config:
     name: str = "Agora"
     version: str = "0.1.0"
@@ -22,6 +33,7 @@ class Config:
     l1_ttl_seconds: int = 300
     embedding_provider: str = "sentence-transformers"
     embedding_model: str = "all-MiniLM-L6-v2"
+    backends: list[BackendConfig] = field(default_factory=list)
 
     @property
     def resolved_chroma_path(self) -> Path:
@@ -51,6 +63,22 @@ class Config:
         s = raw.get("storage", {})
         c = raw.get("cache", {})
         e = raw.get("embedding", {})
+        backends_raw = raw.get("backends", [])
+        backends = []
+        for b in backends_raw:
+            env_raw = b.get("env", {})
+            resolved_env = {
+                k: os.path.expandvars(v) for k, v in env_raw.items()
+            } if env_raw else {}
+            backends.append(BackendConfig(
+                name=b.get("name", ""),
+                transport=b.get("transport", "stdio"),
+                command=b.get("command"),
+                url=b.get("url"),
+                description=b.get("description", ""),
+                read_only=b.get("read_only", False),
+                env=resolved_env,
+            ))
         return cls(
             name=a.get("name", "Agora"),
             version=a.get("version", "0.1.0"),
@@ -59,4 +87,5 @@ class Config:
             l1_ttl_seconds=c.get("l1_ttl_seconds", 300),
             embedding_provider=e.get("provider", "sentence-transformers"),
             embedding_model=e.get("model", "all-MiniLM-L6-v2"),
+            backends=backends,
         )

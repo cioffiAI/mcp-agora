@@ -253,3 +253,74 @@ async def test_mcp_stress_save_and_query(server_params):
             )
             d_wasm = json.loads(q_wasm.content[0].text)
             assert any("WebAssembly" in r["text"] for r in d_wasm["results"]), "New entry not found"
+
+
+@pytest.fixture(scope="function")
+def mcp_env_with_backends():
+    tmp = tempfile.mkdtemp()
+    chroma_path = Path(tmp) / "chroma"
+    chroma_path.mkdir()
+    config = {
+        "agora": {"name": "Agora", "version": "0.1.0"},
+        "storage": {"chroma_path": str(chroma_path)},
+        "cache": {"l1_max_entries": 100, "l1_ttl_seconds": 60},
+        "embedding": {"provider": "sentence-transformers", "model": "all-MiniLM-L6-v2"},
+        "backends": [
+            {
+                "name": "echo",
+                "transport": "stdio",
+                "command": ["python", "-c", "pass"],
+                "description": "Echo server: returns text back as-is",
+                "read_only": True,
+            },
+        ],
+    }
+    config_path = Path(tmp) / "config.yaml"
+    import yaml
+    with open(config_path, "w") as f:
+        yaml.dump(config, f)
+    return config_path
+
+
+@pytest.fixture(scope="function")
+def server_params_with_backends(mcp_env_with_backends):
+    return StdioServerParameters(
+        command="uv",
+        args=["run", "agora"],
+        cwd=str(PROJECT_DIR),
+        env={**os.environ, "AGORA_CONFIG": str(mcp_env_with_backends)},
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_routing(server_params_with_backends):
+    """Test routing tools: agora_route (no-match), agora_backends, agora_status."""
+    async with stdio_client(server_params_with_backends) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            tools = await session.list_tools()
+            tool_names = [t.name for t in tools.tools]
+            assert "agora_route" in tool_names
+            assert "agora_backends" in tool_names
+
+            # --- agora_backends lists configured backend (not connected) ---
+            backends = json.loads((await session.call_tool("agora_backends", arguments={})).content[0].text)
+            assert len(backends["backends"]) == 1
+            assert backends["backends"][0]["name"] == "echo"
+            assert backends["backends"][0]["connected"] is False
+
+            # --- agora_route with no match returns error ---
+            no_match = await session.call_tool(
+                "agora_route",
+                arguments={"target": "nonexistent", "tool": "echo", "arguments": {}},
+            )
+            err = json.loads(no_match.content[0].text)
+            assert "error" in err
+            assert "No backend" in err["error"]
+
+            # --- agora_status includes backends section ---
+            status = json.loads((await session.call_tool("agora_status", arguments={})).content[0].text)
+            assert "backends" in status
+            assert status["backends"]["total"] == 1
+            assert status["backends"]["connected"] == 0

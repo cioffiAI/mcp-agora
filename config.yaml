@@ -12,3 +12,17 @@ cache:
 embedding:
   provider: "sentence-transformers"
   model: "all-MiniLM-L6-v2"
+
+backends:
+  - name: "github"
+    transport: "stdio"
+    command: ["npx", "-y", "@modelcontextprotocol/server-github"]
+    description: "GitHub API: issues, PRs, repos, code search, commits"
+    read_only: false
+    env:
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"
+  - name: "playwright"
+    transport: "stdio"
+    command: ["npx", "@playwright/mcp@latest"]
+    description: "Browser automation: navigate, click, screenshot, forms"
+    read_only: false
