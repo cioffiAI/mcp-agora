@@ -22,17 +22,17 @@ Build an MCP Server that allows AI agents (Claude Code, Codex, ChatGPT, Gemini C
 - Share memory across agents and sessions
 - Cache frequent queries in-memory (TTLCache)
 
-### Non-goals (do NOT implement in Phase 1)
+### Non-goals (do NOT implement in Phase 1 or 2)
 
-- Semantic routing / broadcasting
-- Backend connectors (STDIO/HTTP to other MCP servers)
+- Semantic broadcasting / fan-out
+- HTTP connector (STDIO only in Phase 2)
 - SQLite db layer (provenance, token_usage, schema)
 - Chunking (save short entries only, ≤256 word pieces)
 - Cache L2 persistent disk
 - Streamable HTTP transport (STDIO only)
 - Docker, RBAC, auth, scaling
 
-## Architecture Stack (Phase 1)
+## Architecture Stack (Phase 2)
 
 ```
 Python 3.13+  │  uv 0.11+
@@ -57,6 +57,14 @@ mcp-agora/
 │   ├── main.py              # Entry point: `agora` command
 │   ├── server.py            # FastMCP server + tool registration
 │   ├── config.py            # YAML config loader
+│   ├── registry.py          # BackendRegistry (lifecycle, lazy connect)
+│   ├── connectors/
+│   │   ├── __init__.py
+│   │   ├── base.py          # BackendConnector ABC
+│   │   └── stdio.py         # STDIO subprocess MCP client
+│   ├── routing/
+│   │   ├── __init__.py
+│   │   └── router.py        # Semantic + exact name router
 │   ├── embedding/
 │   │   ├── __init__.py
 │   │   ├── base.py          # Abstract EmbeddingProvider
@@ -72,7 +80,10 @@ mcp-agora/
 │   ├── test_embedding.py
 │   ├── test_memory.py
 │   ├── test_cache.py
-│   └── test_protocol.py
+│   ├── test_protocol.py
+│   ├── test_routing.py
+│   ├── test_connectors.py
+│   └── test_mcp_smoke.py
 └── examples/
     └── config.yaml.example
 ```
@@ -81,7 +92,7 @@ mcp-agora/
 
 ### FastMCP (NOT low-level Server)
 
-Use `FastMCP` from `mcp.server.fastmcp`. Do NOT use `mcp.server.Server` directly in Phase 1.
+Use `FastMCP` from `mcp.server.fastmcp`. Do NOT use `mcp.server.Server` directly in Phase 1 or 2.
 
 ```python
 from mcp.server.fastmcp import FastMCP
@@ -94,6 +105,14 @@ def agora_save(content: str, tags: list[str] | None = None) -> dict:
 
 @mcp.tool()
 def agora_query(query: str, top_k: int = 5) -> dict:
+    ...
+
+@mcp.tool()
+async def agora_route(target: str, tool: str, arguments: dict | None = None) -> dict:
+    ...
+
+@mcp.tool()
+def agora_backends() -> dict:
     ...
 ```
 
@@ -110,6 +129,7 @@ def agora_query(query: str, top_k: int = 5) -> dict:
 - Default path: `~/.agora/chroma`
 - Single collection "knowledge" in Phase 1
 - NO duckdb+parquet fallback — if ChromaDB fails, stop and debug
+- Router creates its own collection "backends" on warmup for backend description embeddings
 
 ### Cache
 
@@ -151,12 +171,15 @@ def agora_query(query: str, top_k: int = 5) -> dict:
    - `test_embedding.py`: dimension = 384, returns list[float], document retrieval order
    - `test_memory.py`: add → query → delete → verify
    - `test_cache.py`: set → get → expire → stats
+   - `test_routing.py`: cosine similarity, exact/semantic/no match, warmup
 
 2. **Integration test** (same process, direct function calls):
    - `test_protocol.py`: call `save_knowledge()` then `query_knowledge()` directly
+   - `test_connectors.py`: connector properties, health, disconnect, double connect
 
 3. **MCP smoke test** (via `mcp.ClientSession`):
    - `test_protocol.py`: `tools/list` returns correct tool names, `tools/call` succeeds
+   - `test_mcp_smoke.py`: smoke, multiple entries, stress, routing, status
 
 4. **Manual test** with Claude Code/Codex
 
@@ -189,6 +212,8 @@ uv run ruff check .
 | no semantic cache | Two similar queries can be semantically different |
 | all-MiniLM-L6-v2 | 384d, lightweight, good enough for Phase 1 |
 | STDIO only in Phase 1 | Streamable HTTP adds complexity without value yet |
+| lazy backend connect | No startup cost for idle backends |
+| semantic + exact name router | Exact match tried first, semantic fallback (≥0.5) |
 
 ## External MCP Servers
 
