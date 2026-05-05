@@ -1,6 +1,6 @@
 import pytest
 
-from agora.connectors.base import _ReadOnlyBlockedError
+from agora.connectors.base import ReadOnlyBlockedError
 from agora.connectors.http import HttpConnector
 from agora.connectors.stdio import StdioConnector
 
@@ -88,7 +88,7 @@ async def test_read_only_blocks_write_tools():
         read_only=True,
         command=["echo", "hello"],
     )
-    with pytest.raises(_ReadOnlyBlockedError) as exc:
+    with pytest.raises(ReadOnlyBlockedError) as exc:
         await c.call_tool("create_issue", {"title": "bug"})
     assert "read-only" in str(exc.value).lower()
 
@@ -101,7 +101,7 @@ async def test_read_only_blocks_write_tool_no_prefix():
         read_only=True,
         command=["echo", "hello"],
     )
-    with pytest.raises(_ReadOnlyBlockedError):
+    with pytest.raises(ReadOnlyBlockedError):
         await c.call_tool("delete_repo", {"name": "foo"})
 
 
@@ -126,11 +126,11 @@ async def test_read_only_allows_read_prefixes():
             read_only=True,
             command=["echo", "hello"],
         )
-        # Should NOT raise _ReadOnlyBlockedError — the check passes
+        # Should NOT raise ReadOnlyBlockedError — the check passes
         # It WILL fail at connect because echo exits, but that's not our concern
         try:
             await c.call_tool(tool, {})
-        except _ReadOnlyBlockedError:
+        except ReadOnlyBlockedError:
             pytest.fail(f"Tool '{tool}' was wrongly blocked (should be allowed)")
         except Exception:
             pass  # connection error is expected

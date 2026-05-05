@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -5,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from agora.cache.l1_memory import L1Cache
 from agora.config import Config
-from agora.connectors.base import _ReadOnlyBlockedError
+from agora.connectors.base import ReadOnlyBlockedError
 from agora.embedding.sentence import SentenceTransformerProvider
 from agora.memory.vector_store import VectorStore
 from agora.registry import BackendRegistry
@@ -91,7 +92,7 @@ def create_server(config: Config | None = None) -> FastMCP:
                 "content": result["content"],
                 "isError": result.get("isError", False),
             }
-        except _ReadOnlyBlockedError as e:
+        except ReadOnlyBlockedError as e:
             return {
                 "error": str(e),
                 "backend": connector.name,
@@ -109,23 +110,27 @@ def create_server(config: Config | None = None) -> FastMCP:
 
     @mcp.tool()
     async def agora_broadcast(tool: str, arguments: dict | None = None) -> dict:
-        results = {}
-        for b in registry.list_backends():
+        backends = registry.list_backends()
+        args = arguments or {}
+
+        async def call_one(b):
             connector = registry.get_connector(b.name)
             if connector is None:
-                results[b.name] = {"error": "backend not found"}
-                continue
+                return b.name, {"error": "backend not found"}
             try:
-                result = await connector.call_tool(tool, arguments or {})
-                results[b.name] = {
+                result = await connector.call_tool(tool, args)
+                return b.name, {
                     "content": result["content"],
                     "isError": result.get("isError", False),
                 }
-            except _ReadOnlyBlockedError as e:
-                results[b.name] = {"blocked": True, "error": str(e)}
+            except ReadOnlyBlockedError as e:
+                return b.name, {"blocked": True, "error": str(e)}
             except Exception as e:
-                results[b.name] = {"error": str(e)}
-        return {"tool": tool, "results": results}
+                return b.name, {"error": str(e)}
+
+        tasks = [call_one(b) for b in backends]
+        gathered = await asyncio.gather(*tasks)
+        return {"tool": tool, "results": dict(gathered)}
 
     @mcp.tool()
     def agora_backends() -> dict:

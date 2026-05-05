@@ -26,11 +26,16 @@ class BackendRegistry:
     def _build_connector(self, config: BackendConfig) -> BackendConnector:
         timeout = config.timeout_seconds or 30.0
         if config.transport == "stdio":
+            cmd = config.command or []
+            if not cmd:
+                raise ValueError(
+                    f"STDIO backend '{config.name}' requires a 'command' in config"
+                )
             return StdioConnector(
                 name=config.name,
                 description=config.description,
                 read_only=config.read_only,
-                command=config.command or [],
+                command=cmd,
                 env=config.env,
                 timeout=timeout,
             )

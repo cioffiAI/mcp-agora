@@ -1,8 +1,11 @@
-import asyncio
 from abc import ABC, abstractmethod
 
 _READ_TOOL_PREFIXES = ("list_", "get_", "fetch_", "read_", "search_", "find_",
                        "query_", "describe_", "show_")
+
+
+class ReadOnlyBlockedError(Exception):
+    pass
 
 
 class BackendConnector(ABC):
@@ -50,7 +53,7 @@ class BackendConnector(ABC):
 
     async def call_tool(self, tool_name: str, arguments: dict) -> dict:
         if self._read_only and not tool_name.startswith(_READ_TOOL_PREFIXES):
-            raise _ReadOnlyBlockedError(
+            raise ReadOnlyBlockedError(
                 f"Backend '{self._name}' is read-only, tool '{tool_name}' blocked. "
                 f"Allowed prefixes: {', '.join(_READ_TOOL_PREFIXES)}"
             )
@@ -61,7 +64,3 @@ class BackendConnector(ABC):
 
     @abstractmethod
     async def health(self) -> bool: ...
-
-
-class _ReadOnlyBlockedError(Exception):
-    pass
