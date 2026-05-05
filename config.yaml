@@ -1,6 +1,6 @@
 agora:
   name: "Agora"
-  version: "0.1.0"
+  version: "0.2.0"
 
 storage:
   chroma_path: "~/.agora/chroma"
@@ -19,10 +19,12 @@ backends:
     command: ["npx", "-y", "@modelcontextprotocol/server-github"]
     description: "GitHub API: issues, PRs, repos, code search, commits"
     read_only: false
+    timeout_seconds: 15
     env:
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
   - name: "playwright"
     transport: "stdio"
     command: ["npx", "@playwright/mcp@latest"]
     description: "Browser automation: navigate, click, screenshot, forms"
-    read_only: false
+    read_only: true
+    timeout_seconds: 30

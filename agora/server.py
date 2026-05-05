@@ -5,6 +5,7 @@ from mcp.server.fastmcp import FastMCP
 
 from agora.cache.l1_memory import L1Cache
 from agora.config import Config
+from agora.connectors.base import _ReadOnlyBlockedError
 from agora.embedding.sentence import SentenceTransformerProvider
 from agora.memory.vector_store import VectorStore
 from agora.registry import BackendRegistry
@@ -90,6 +91,14 @@ def create_server(config: Config | None = None) -> FastMCP:
                 "content": result["content"],
                 "isError": result.get("isError", False),
             }
+        except _ReadOnlyBlockedError as e:
+            return {
+                "error": str(e),
+                "backend": connector.name,
+                "tool": tool,
+                "method": method,
+                "blocked": True,
+            }
         except Exception as e:
             return {
                 "error": f"Tool '{tool}' on backend '{connector.name}' failed: {e}",
@@ -97,6 +106,26 @@ def create_server(config: Config | None = None) -> FastMCP:
                 "tool": tool,
                 "method": method,
             }
+
+    @mcp.tool()
+    async def agora_broadcast(tool: str, arguments: dict | None = None) -> dict:
+        results = {}
+        for b in registry.list_backends():
+            connector = registry.get_connector(b.name)
+            if connector is None:
+                results[b.name] = {"error": "backend not found"}
+                continue
+            try:
+                result = await connector.call_tool(tool, arguments or {})
+                results[b.name] = {
+                    "content": result["content"],
+                    "isError": result.get("isError", False),
+                }
+            except _ReadOnlyBlockedError as e:
+                results[b.name] = {"blocked": True, "error": str(e)}
+            except Exception as e:
+                results[b.name] = {"error": str(e)}
+        return {"tool": tool, "results": results}
 
     @mcp.tool()
     def agora_backends() -> dict:

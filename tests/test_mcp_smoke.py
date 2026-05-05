@@ -50,6 +50,9 @@ async def test_mcp_full_smoke(server_params):
             assert "agora_save" in tool_names
             assert "agora_query" in tool_names
             assert "agora_status" in tool_names
+            assert "agora_route" in tool_names
+            assert "agora_backends" in tool_names
+            assert "agora_broadcast" in tool_names
 
             # --- agora_status (empty) ---
             status = json.loads((await session.call_tool("agora_status", arguments={})).content[0].text)
@@ -303,12 +306,14 @@ async def test_mcp_routing(server_params_with_backends):
             tool_names = [t.name for t in tools.tools]
             assert "agora_route" in tool_names
             assert "agora_backends" in tool_names
+            assert "agora_broadcast" in tool_names
 
             # --- agora_backends lists configured backend (not connected) ---
             backends = json.loads((await session.call_tool("agora_backends", arguments={})).content[0].text)
             assert len(backends["backends"]) == 1
             assert backends["backends"][0]["name"] == "echo"
             assert backends["backends"][0]["connected"] is False
+            assert backends["backends"][0]["read_only"] is True
 
             # --- agora_route with no match returns error ---
             no_match = await session.call_tool(
@@ -318,6 +323,25 @@ async def test_mcp_routing(server_params_with_backends):
             err = json.loads(no_match.content[0].text)
             assert "error" in err
             assert "No backend" in err["error"]
+
+            # --- agora_route with read_only backend + write tool → blocked ---
+            blocked = await session.call_tool(
+                "agora_route",
+                arguments={"target": "echo", "tool": "create_issue", "arguments": {}},
+            )
+            blocked_data = json.loads(blocked.content[0].text)
+            assert blocked_data.get("blocked") is True
+            assert "read-only" in blocked_data.get("error", "").lower()
+
+            # --- agora_broadcast returns results for all configured backends ---
+            broadcast = await session.call_tool(
+                "agora_broadcast",
+                arguments={"tool": "echo", "arguments": {}},
+            )
+            broadcast_data = json.loads(broadcast.content[0].text)
+            assert broadcast_data["tool"] == "echo"
+            assert "results" in broadcast_data
+            assert "echo" in broadcast_data["results"]
 
             # --- agora_status includes backends section ---
             status = json.loads((await session.call_tool("agora_status", arguments={})).content[0].text)

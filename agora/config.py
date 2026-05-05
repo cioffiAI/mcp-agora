@@ -21,6 +21,7 @@ class BackendConfig:
     url: str | None = None
     description: str = ""
     read_only: bool = False
+    timeout_seconds: float | None = None
     env: dict[str, str] = field(default_factory=dict)
 
 
@@ -77,6 +78,7 @@ class Config:
                 url=b.get("url"),
                 description=b.get("description", ""),
                 read_only=b.get("read_only", False),
+                timeout_seconds=b.get("timeout_seconds"),
                 env=resolved_env,
             ))
         return cls(

@@ -829,6 +829,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cachetools" },
     { name = "chromadb" },
+    { name = "httpx" },
     { name = "mcp" },
     { name = "pyyaml" },
     { name = "sentence-transformers" },
@@ -844,6 +845,7 @@ dev = [
 requires-dist = [
     { name = "cachetools" },
     { name = "chromadb" },
+    { name = "httpx" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "pyyaml" },
     { name = "sentence-transformers", specifier = ">=3.0.0" },

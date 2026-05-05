@@ -1,21 +1,18 @@
-import asyncio
-import os
 from contextlib import AsyncExitStack
 
 from mcp import ClientSession
-from mcp.client.stdio import stdio_client, StdioServerParameters
+from mcp.client.streamable_http import streamablehttp_client
 
 from agora.connectors.base import BackendConnector
 
 
-class StdioConnector(BackendConnector):
+class HttpConnector(BackendConnector):
     def __init__(self, name: str, description: str, read_only: bool,
-                 command: list[str], env: dict[str, str] | None = None,
-                 cwd: str | None = None, timeout: float = 30.0) -> None:
-        super().__init__(name, description, read_only, transport="stdio", timeout=timeout)
-        self._command = command
-        self._env_overrides = env or {}
-        self._cwd = cwd
+                 url: str, headers: dict[str, str] | None = None,
+                 timeout: float = 30.0) -> None:
+        super().__init__(name, description, read_only, transport="http", timeout=timeout)
+        self._url = url
+        self._headers = headers or {}
         self._session: ClientSession | None = None
         self._read_stream = None
         self._write_stream = None
@@ -30,29 +27,18 @@ class StdioConnector(BackendConnector):
     async def connect(self) -> None:
         if self._connected:
             return
-        merged_env = {**os.environ, **self._env_overrides} if self._env_overrides else None
-        params = StdioServerParameters(
-            command=self._command[0],
-            args=self._command[1:] if len(self._command) > 1 else [],
-            env=merged_env,
-            cwd=self._cwd,
-        )
         self._exit_stack = AsyncExitStack()
-        try:
-            async with asyncio.timeout(self._timeout):
-                streams = await self._exit_stack.enter_async_context(stdio_client(params))
-                self._read_stream, self._write_stream = streams
-                self._session = await self._exit_stack.enter_async_context(
-                    ClientSession(self._read_stream, self._write_stream)
-                )
-                await self._session.initialize()
-        except asyncio.TimeoutError:
-            await self._exit_stack.aclose()
-            self._exit_stack = None
-            raise ConnectionError(
-                f"Timeout ({self._timeout}s) connecting to backend '{self._name}'. "
-                f"Is the backend running?"
-            )
+        client = streamablehttp_client(
+            self._url,
+            headers=self._headers,
+            timeout=self._timeout,
+        )
+        transport = await self._exit_stack.enter_async_context(client)
+        self._read_stream, self._write_stream, _ = transport
+        self._session = await self._exit_stack.enter_async_context(
+            ClientSession(self._read_stream, self._write_stream)
+        )
+        await self._session.initialize()
         self._connected = True
 
     async def disconnect(self) -> None:

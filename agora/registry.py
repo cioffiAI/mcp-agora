@@ -1,5 +1,6 @@
 from agora.config import BackendConfig
 from agora.connectors.base import BackendConnector
+from agora.connectors.http import HttpConnector
 from agora.connectors.stdio import StdioConnector
 
 
@@ -23,6 +24,7 @@ class BackendRegistry:
         return connector
 
     def _build_connector(self, config: BackendConfig) -> BackendConnector:
+        timeout = config.timeout_seconds or 30.0
         if config.transport == "stdio":
             return StdioConnector(
                 name=config.name,
@@ -30,8 +32,23 @@ class BackendRegistry:
                 read_only=config.read_only,
                 command=config.command or [],
                 env=config.env,
+                timeout=timeout,
             )
-        raise ValueError(f"Unsupported transport '{config.transport}' for backend '{config.name}' (only stdio in Phase 2)")
+        if config.transport == "http":
+            if not config.url:
+                raise ValueError(
+                    f"HTTP backend '{config.name}' requires a 'url' field in config"
+                )
+            return HttpConnector(
+                name=config.name,
+                description=config.description,
+                read_only=config.read_only,
+                url=config.url,
+                timeout=timeout,
+            )
+        raise ValueError(
+            f"Unsupported transport '{config.transport}' for backend '{config.name}'"
+        )
 
     def list_backends(self) -> list[BackendConfig]:
         return list(self._configs.values())
