@@ -1,0 +1,62 @@
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+
+_DEFAULT_CONFIG = {
+    "agora": {"name": "Agora", "version": "0.1.0"},
+    "storage": {"chroma_path": "~/.agora/chroma"},
+    "cache": {"l1_max_entries": 1000, "l1_ttl_seconds": 300},
+    "embedding": {"provider": "sentence-transformers", "model": "all-MiniLM-L6-v2"},
+}
+
+
+@dataclass
+class Config:
+    name: str = "Agora"
+    version: str = "0.1.0"
+    chroma_path: str = "~/.agora/chroma"
+    l1_max_entries: int = 1000
+    l1_ttl_seconds: int = 300
+    embedding_provider: str = "sentence-transformers"
+    embedding_model: str = "all-MiniLM-L6-v2"
+
+    @property
+    def resolved_chroma_path(self) -> Path:
+        return Path(self.chroma_path).expanduser()
+
+    @classmethod
+    def load(cls, path: str | Path | None = None) -> "Config":
+        if path is None:
+            env_path = os.environ.get("AGORA_CONFIG")
+            if env_path:
+                path = Path(env_path).expanduser()
+        if path is None:
+            candidates = [
+                Path.cwd() / "config.yaml",
+                Path.home() / ".agora" / "config.yaml",
+            ]
+            for c in candidates:
+                if c.exists():
+                    path = c
+                    break
+            else:
+                return cls()
+        path = Path(path).expanduser()
+        with open(path) as f:
+            raw = yaml.safe_load(f)
+        a = raw.get("agora", {})
+        s = raw.get("storage", {})
+        c = raw.get("cache", {})
+        e = raw.get("embedding", {})
+        return cls(
+            name=a.get("name", "Agora"),
+            version=a.get("version", "0.1.0"),
+            chroma_path=s.get("chroma_path", "~/.agora/chroma"),
+            l1_max_entries=c.get("l1_max_entries", 1000),
+            l1_ttl_seconds=c.get("l1_ttl_seconds", 300),
+            embedding_provider=e.get("provider", "sentence-transformers"),
+            embedding_model=e.get("model", "all-MiniLM-L6-v2"),
+        )

@@ -1,0 +1,14 @@
+agora:
+  name: "Agora"
+  version: "0.1.0"
+
+storage:
+  chroma_path: "~/.agora/chroma"
+
+cache:
+  l1_max_entries: 1000
+  l1_ttl_seconds: 300
+
+embedding:
+  provider: "sentence-transformers"
+  model: "all-MiniLM-L6-v2"

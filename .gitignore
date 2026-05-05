@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+.venv
+
+# Test artifacts
+.pytest_cache/
+__pycache__/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# ChromaDB persistent data (user-specific)
+~/.agora/
+chroma/
+
+# Model cache
+~/.cache/agora/
+
+# Stray tilde files (shell artifacts)
+~

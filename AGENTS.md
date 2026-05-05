@@ -1,0 +1,200 @@
+# MCP Agora — Agent Instructions
+
+## Project Overview
+
+MCP Agora is a **portfolio/learning project** implementing an MCP Server with cross-agent persistent memory. It is NOT a product — it is not competing with ContextForge (IBM), MetaMCP, AutoMem, or mcp-memory-service.
+
+### Goal
+
+Build an MCP Server that allows AI agents (Claude Code, Codex, ChatGPT, Gemini CLI) to:
+- Save knowledge with `agora.save` → persistent vector memory (ChromaDB)
+- Query knowledge with `agora.query` → semantic search across saved entries
+- Share memory across agents and sessions
+- Cache frequent queries in-memory (TTLCache)
+
+### Non-goals (do NOT implement in Phase 1)
+
+- Semantic routing / broadcasting
+- Backend connectors (STDIO/HTTP to other MCP servers)
+- SQLite db layer (provenance, token_usage, schema)
+- Chunking (save short entries only, ≤256 word pieces)
+- Cache L2 persistent disk
+- Streamable HTTP transport (STDIO only)
+- Docker, RBAC, auth, scaling
+
+## Architecture Stack (Phase 1)
+
+```
+Python 3.13+  │  uv 0.11+
+FastMCP       │  MCP SDK ≥1.0.0
+ChromaDB      │  PersistentClient
+sentence-transformers  │  all-MiniLM-L6-v2 (384d)
+cachetools    │  TTLCache (1000 entries, 5min TTL)
+pyyaml        │  config.yaml
+pytest        │  pytest-asyncio
+```
+
+## Directory Structure
+
+```
+mcp-agora/
+├── pyproject.toml
+├── config.yaml
+├── AGAENTS.md
+├── ARCHITECTURE.md
+├── agora/
+│   ├── __init__.py
+│   ├── main.py              # Entry point: `agora` command
+│   ├── server.py            # FastMCP server + tool registration
+│   ├── config.py            # YAML config loader
+│   ├── embedding/
+│   │   ├── __init__.py
+│   │   ├── base.py          # Abstract EmbeddingProvider
+│   │   └── sentence.py      # sentence-transformers wrapper
+│   ├── memory/
+│   │   ├── __init__.py
+│   │   └── vector_store.py  # ChromaDB PersistentClient wrapper
+│   └── cache/
+│       ├── __init__.py
+│       └── l1_memory.py     # TTLCache in-memory
+├── tests/
+│   ├── __init__.py
+│   ├── test_embedding.py
+│   ├── test_memory.py
+│   ├── test_cache.py
+│   └── test_protocol.py
+└── examples/
+    └── config.yaml.example
+```
+
+## Implementation Constraints
+
+### FastMCP (NOT low-level Server)
+
+Use `FastMCP` from `mcp.server.fastmcp`. Do NOT use `mcp.server.Server` directly in Phase 1.
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("Agora")
+
+@mcp.tool()
+def agora_save(content: str, tags: list[str] | None = None) -> dict:
+    ...
+
+@mcp.tool()
+def agora_query(query: str, top_k: int = 5) -> dict:
+    ...
+```
+
+### Embedding
+
+- Model: `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions)
+- Lazy loading: load model on first call, not on import
+- Input limit: 256 word pieces (no chunking in Phase 1)
+- Store `~/.cache/agora/models/`
+
+### ChromaDB
+
+- Use `chromadb.PersistentClient(path=...)`
+- Default path: `~/.agora/chroma`
+- Single collection "knowledge" in Phase 1
+- NO duckdb+parquet fallback — if ChromaDB fails, stop and debug
+
+### Cache
+
+- Use `cachetools.TTLCache` (NOT `LRUCache` — TTLCache already has TTL built-in)
+- Cache key = SHA256 of JSON with ALL params:
+  ```python
+  cache_key = sha256(json.dumps({
+      "tool": "agora.query",
+      "collection": "knowledge",
+      "query": query,
+      "top_k": top_k,
+      "model": "all-MiniLM-L6-v2"
+  }, sort_keys=True))
+  ```
+- On `agora.save`: clear ALL query cache (simple, safe)
+
+### Config
+
+- `config.yaml` with `pyyaml`
+- Use `Path.expanduser()` and `os.path.expandvars()` for all paths (Windows safety)
+- Default config minimal:
+  ```yaml
+  agora:
+    name: "Agora"
+    version: "0.1.0"
+  storage:
+    chroma_path: "~/.agora/chroma"
+  cache:
+    l1_max_entries: 1000
+    l1_ttl_seconds: 300
+  embedding:
+    provider: "sentence-transformers"
+    model: "all-MiniLM-L6-v2"
+  ```
+
+## Testing Strategy (by priority)
+
+1. **Unit tests** (pytest, no MCP, no subprocess):
+   - `test_embedding.py`: dimension = 384, returns list[float], document retrieval order
+   - `test_memory.py`: add → query → delete → verify
+   - `test_cache.py`: set → get → expire → stats
+
+2. **Integration test** (same process, direct function calls):
+   - `test_protocol.py`: call `save_knowledge()` then `query_knowledge()` directly
+
+3. **MCP smoke test** (via `mcp.ClientSession`):
+   - `test_protocol.py`: `tools/list` returns correct tool names, `tools/call` succeeds
+
+4. **Manual test** with Claude Code/Codex
+
+Do NOT use timing as a metric in tests (flaky on Windows). Use `cache.stats()["hit_count"]`.
+
+## Command Reference
+
+```bash
+# Run
+uv run agora
+
+# Test
+uv run pytest tests/ -v
+
+# Single test
+uv run pytest tests/test_cache.py -v -k "test_hit_count"
+
+# Lint (when added)
+uv run ruff check .
+```
+
+## Key Decisions (do not change without discussion)
+
+| Decision | Rationale |
+|----------|-----------|
+| FastMCP not low-level Server | Faster development, cleaner code |
+| ChromaDB not SQLite-VSS | More established, better docs |
+| no db/ layer in Phase 1 | Avoid premature abstractions |
+| cache clear-all on save | Simple, safe, sufficient for Phase 1 |
+| no semantic cache | Two similar queries can be semantically different |
+| all-MiniLM-L6-v2 | 384d, lightweight, good enough for Phase 1 |
+| STDIO only in Phase 1 | Streamable HTTP adds complexity without value yet |
+
+## External MCP Servers
+
+### GitHub MCP (configured in opencode)
+
+The project uses `@modelcontextprotocol/server-github` for GitHub operations.
+- Config location: `~/.config/opencode/opencode.jsonc`
+- Auth: `GITHUB_TOKEN` env var (set in PowerShell profile via `gh auth token`)
+- Profile: `C:\Users\antonio\Documents\WindowsPowerShell\profile.ps1`
+
+### Playwright MCP (configured in opencode)
+
+The `@playwright/mcp` server is available for browser automation.
+
+## Related Documents
+
+- `ARCHITECTURE.md` — Full architecture, rationale, risk analysis, flows
+- `config.yaml` — Configuration file
+- `pyproject.toml` — Dependencies and build system
