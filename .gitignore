@@ -29,5 +29,11 @@ chroma/
 # Model cache
 ~/.cache/agora/
 
+# Log files
+*.log
+
+# ChromaDB artifacts (generated at runtime)
+chroma.sqlite3
+
 # Stray tilde files (shell artifacts)
 ~
