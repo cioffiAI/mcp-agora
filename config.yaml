@@ -1,6 +1,6 @@
 agora:
   name: "Agora"
-  version: "0.3.0"
+  version: "0.4.0"
 
 storage:
   chroma_path: "~/.agora/chroma"
@@ -23,6 +23,9 @@ backends:
     description: "GitHub API: issues, PRs, repos, code search, commits"
     read_only: false
     timeout_seconds: 15
+    max_retries: 3
+    retry_delay: 1.0
+    rate_limit_rps: 5
     env:
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
   - name: "playwright"
@@ -31,3 +34,6 @@ backends:
     description: "Browser automation: navigate, click, screenshot, forms"
     read_only: true
     timeout_seconds: 30
+    max_retries: 2
+    retry_delay: 0.5
+    rate_limit_rps: 2

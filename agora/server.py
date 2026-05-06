@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -15,27 +16,41 @@ from agora.registry import BackendRegistry
 from agora.routing.router import Router
 
 
-def create_server(config: Config | None = None) -> FastMCP:
+def create_server(config: Config | None = None, logger: logging.Logger | None = None) -> FastMCP:
     cfg = config or Config.load()
+    log = logger or logging.getLogger("agora.server")
 
+    log.info("Initializing embedding provider: %s", cfg.embedding_model)
     embedding = SentenceTransformerProvider(model_name=cfg.embedding_model)
     embedding.warmup()
+    log.info("Embedding model loaded (dim=%d)", embedding.dimension())
 
     vector_store = VectorStore(
         path=str(cfg.resolved_chroma_path),
         embedding_provider=embedding,
     )
+    log.info("ChromaDB ready: path=%s", cfg.resolved_chroma_path)
+
     l1_cache = L1Cache(maxsize=cfg.l1_max_entries, ttl=cfg.l1_ttl_seconds)
     db = Database(path=str(cfg.resolved_db_path))
     l2_cache = L2Cache(db=db, ttl_seconds=cfg.l2_ttl_seconds)
     l2_cache.prune_expired()
+    log.info(
+        "Cache layers ready: L1=%d entries/%ds TTL, L2=%d entries/%ds TTL",
+        cfg.l1_max_entries,
+        cfg.l1_ttl_seconds,
+        cfg.l2_max_entries,
+        cfg.l2_ttl_seconds,
+    )
 
-    registry = BackendRegistry()
+    registry = BackendRegistry(logger=log)
     for b in cfg.backends:
         registry.register(b)
+    log.info("Registered %d backends: %s", len(cfg.backends), [b.name for b in cfg.backends])
 
     router = Router(registry, embedding)
     router.warmup()
+    log.info("Router warmed up (%d backend embeddings)", len(cfg.backends))
 
     mcp = FastMCP(cfg.name)
 
@@ -47,7 +62,7 @@ def create_server(config: Config | None = None) -> FastMCP:
         session: str | None = None,
         confidence: float = 0.5,
     ) -> dict:
-        entry_id = f"mem_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        entry_id = "mem_{}_{}".format(datetime.now(UTC).strftime("%Y%m%d_%H%M%S"), uuid.uuid4().hex[:8])
         agent_name = agent or "unknown"
         session_id = session or str(uuid.uuid4())
         metadata = {
@@ -57,9 +72,15 @@ def create_server(config: Config | None = None) -> FastMCP:
         }
         ids = vector_store.add(texts=[content], metadata=[metadata], ids=[entry_id])
         db.register_agent(agent_name)
-        db.add_provenance(entry_id=entry_id, source_agent=agent_name, source_session=session_id, confidence=confidence)
+        db.add_provenance(
+            entry_id=entry_id,
+            source_agent=agent_name,
+            source_session=session_id,
+            confidence=confidence,
+        )
         l1_cache.clear()
         l2_cache.clear()
+        log.info("agora_save: id=%s agent=%s tags=%s confidence=%.2f", entry_id, agent_name, tags, confidence)
         return {
             "saved": True,
             "id": ids[0],
@@ -79,6 +100,7 @@ def create_server(config: Config | None = None) -> FastMCP:
         if cached is not None:
             cached["cached"] = True
             cached["cache_level"] = "l1"
+            log.debug("agora_query L1 HIT: query=%s", query[:60])
             return cached
 
         l2_cached = l2_cache.get(
@@ -97,6 +119,7 @@ def create_server(config: Config | None = None) -> FastMCP:
             )
             l2_cached["cached"] = True
             l2_cached["cache_level"] = "l2"
+            log.debug("agora_query L2 HIT: query=%s", query[:60])
             return l2_cached
 
         results = vector_store.query(query_texts=[query], n_results=top_k)
@@ -119,6 +142,8 @@ def create_server(config: Config | None = None) -> FastMCP:
             model=cfg.embedding_model,
             value=response,
         )
+        result_count = len(results)
+        log.info("agora_query: query=%s results=%d cached=MISS", query[:60], result_count)
         return response
 
     @mcp.tool()
@@ -143,6 +168,7 @@ def create_server(config: Config | None = None) -> FastMCP:
                 r["source_agent"] = p["source_agent"] if p else "unknown"
                 cross_entries.append(r)
 
+            log.info("agora_crossref(entry_id): entry=%s agent=%s cross=%d", entry_id, source_agent, len(cross_entries))
             return {
                 "mode": "entry_id",
                 "source_entry_id": entry_id,
@@ -166,7 +192,13 @@ def create_server(config: Config | None = None) -> FastMCP:
 
         agent_count = len(cross_agent_groups)
         multiple_agents = agent_count > 1
-
+        log.info(
+            "agora_crossref(query): query=%s results=%d agents=%d multiple=%s",
+            query[:60],
+            len(results),
+            agent_count,
+            multiple_agents,
+        )
         return {
             "mode": "query",
             "query": query,
@@ -209,6 +241,7 @@ def create_server(config: Config | None = None) -> FastMCP:
         to_delete_list = list(to_delete)
 
         if dry_run:
+            log.info("agora_forget(DRY_RUN): would delete %d entries", len(to_delete_list))
             return {
                 "forgotten": 0,
                 "dry_run": True,
@@ -219,13 +252,14 @@ def create_server(config: Config | None = None) -> FastMCP:
         vector_store.delete(ids=to_delete_list)
         db.delete_provenance(to_delete_list)
         l1_cache.clear()
-
+        log.info("agora_forget: deleted %d entries", len(to_delete_list))
         return {"forgotten": len(to_delete_list), "dry_run": False, "entry_ids": to_delete_list}
 
     @mcp.tool()
     async def agora_route(target: str, tool: str, arguments: dict | None = None) -> dict:
         connector, method, score = router.route(target)
         if connector is None:
+            log.warning("agora_route: no backend matched target='%s' (method=%s, score=%.2f)", target, method, score)
             return {
                 "error": f"No backend matched '{target}'",
                 "method": method,
@@ -233,6 +267,14 @@ def create_server(config: Config | None = None) -> FastMCP:
             }
         try:
             result = await connector.call_tool(tool, arguments or {})
+            log.info(
+                "agora_route: target=%s backend=%s tool=%s method=%s score=%.2f",
+                target,
+                connector.name,
+                tool,
+                method,
+                score,
+            )
             return {
                 "backend": connector.name,
                 "tool": tool,
@@ -242,6 +284,7 @@ def create_server(config: Config | None = None) -> FastMCP:
                 "isError": result.get("isError", False),
             }
         except ReadOnlyBlockedError as e:
+            log.warning("agora_route BLOCKED: backend=%s tool=%s - %s", connector.name, tool, e)
             return {
                 "error": str(e),
                 "backend": connector.name,
@@ -250,6 +293,7 @@ def create_server(config: Config | None = None) -> FastMCP:
                 "blocked": True,
             }
         except Exception as e:
+            log.error("agora_route ERROR: backend=%s tool=%s - %s", connector.name, tool, e, exc_info=True)
             return {
                 "error": f"Tool '{tool}' on backend '{connector.name}' failed: {e}",
                 "backend": connector.name,
@@ -261,6 +305,7 @@ def create_server(config: Config | None = None) -> FastMCP:
     async def agora_broadcast(tool: str, arguments: dict | None = None) -> dict:
         backends = registry.list_backends()
         args = arguments or {}
+        log.info("agora_broadcast: tool=%s backends=%d", tool, len(backends))
 
         async def call_one(b):
             connector = registry.get_connector(b.name)
@@ -273,8 +318,10 @@ def create_server(config: Config | None = None) -> FastMCP:
                     "isError": result.get("isError", False),
                 }
             except ReadOnlyBlockedError as e:
+                log.warning("agora_broadcast BLOCKED: backend=%s tool=%s - %s", b.name, tool, e)
                 return b.name, {"blocked": True, "error": str(e)}
             except Exception as e:
+                log.error("agora_broadcast ERROR: backend=%s tool=%s - %s", b.name, tool, e, exc_info=True)
                 return b.name, {"error": str(e)}
 
         tasks = [call_one(b) for b in backends]
@@ -282,7 +329,7 @@ def create_server(config: Config | None = None) -> FastMCP:
         return {"tool": tool, "results": dict(gathered)}
 
     @mcp.tool()
-    def agora_backends() -> dict:
+    async def agora_backends() -> dict:
         backends = []
         for b in registry.list_backends():
             backends.append(
@@ -297,10 +344,19 @@ def create_server(config: Config | None = None) -> FastMCP:
         return {"backends": backends}
 
     @mcp.tool()
-    def agora_status() -> dict:
-        connected_count = len(registry.list_connected())
-        l2_stats = l2_cache.stats()
+    async def agora_status() -> dict:
         agents_list = db.list_agents()
+        l2_stats = l2_cache.stats()
+        health_results = await registry.health_check_all()
+        band = sum(1 for h in health_results.values() if h.get("status") == "dead")
+        connected_count = len(registry.list_connected())
+        log.debug(
+            "agora_status: agents=%d backends=%d/%d connected dead=%d",
+            len(agents_list),
+            connected_count,
+            len(registry.list_backends()),
+            band,
+        )
         return {
             "server": "Agora",
             "version": cfg.version,
@@ -317,6 +373,7 @@ def create_server(config: Config | None = None) -> FastMCP:
                 "total": len(registry.list_backends()),
                 "connected": connected_count,
             },
+            "backend_health": health_results,
             "db_size_bytes": db.db_size_bytes(),
             "timestamp": datetime.now(UTC).isoformat(),
         }

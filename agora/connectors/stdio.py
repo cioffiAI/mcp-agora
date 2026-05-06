@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from contextlib import AsyncExitStack
 
@@ -18,8 +19,22 @@ class StdioConnector(BackendConnector):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         timeout: float = 30.0,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        rate_limit_rps: float = 0.0,
+        logger: logging.Logger | None = None,
     ) -> None:
-        super().__init__(name, description, read_only, transport="stdio", timeout=timeout)
+        super().__init__(
+            name,
+            description,
+            read_only,
+            transport="stdio",
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            rate_limit_rps=rate_limit_rps,
+            logger=logger,
+        )
         self._command = command
         self._env_overrides = env or {}
         self._cwd = cwd
@@ -56,10 +71,17 @@ class StdioConnector(BackendConnector):
         except TimeoutError:
             await self._exit_stack.aclose()
             self._exit_stack = None
+            self._log.warning("Timeout connecting to backend '%s' after %.1fs", self._name, self._timeout)
             raise ConnectionError(
-                f"Timeout ({self._timeout}s) connecting to backend '{self._name}'. Is the backend running?"
+                f"Timeout ({self._timeout:.1f}s) connecting to backend '{self._name}'. Is the backend running?"
             )
+        except OSError as e:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
+            self._log.warning("OS error connecting to backend '%s': %s", self._name, e)
+            raise ConnectionError(f"Failed to connect to backend '{self._name}': {e}")
         self._connected = True
+        self._log.info("Connected to backend '%s' (transport=stdio)", self._name)
 
     async def disconnect(self) -> None:
         if self._exit_stack is not None:
@@ -68,6 +90,8 @@ class StdioConnector(BackendConnector):
         self._session = None
         self._read_stream = None
         self._write_stream = None
+        if self._connected:
+            self._log.info("Disconnected from backend '%s'", self._name)
         self._connected = False
 
     async def list_tools(self) -> list[dict]:
@@ -87,9 +111,3 @@ class StdioConnector(BackendConnector):
             "content": content,
             "isError": getattr(result, "isError", False),
         }
-
-    async def health(self) -> bool:
-        try:
-            return self._connected and self._session is not None
-        except Exception:
-            return False

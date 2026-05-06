@@ -1,3 +1,4 @@
+import logging
 from contextlib import AsyncExitStack
 
 from mcp import ClientSession
@@ -15,8 +16,22 @@ class HttpConnector(BackendConnector):
         url: str,
         headers: dict[str, str] | None = None,
         timeout: float = 30.0,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        rate_limit_rps: float = 0.0,
+        logger: logging.Logger | None = None,
     ) -> None:
-        super().__init__(name, description, read_only, transport="http", timeout=timeout)
+        super().__init__(
+            name,
+            description,
+            read_only,
+            transport="http",
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+            rate_limit_rps=rate_limit_rps,
+            logger=logger,
+        )
         self._url = url
         self._headers = headers or {}
         self._session: ClientSession | None = None
@@ -44,6 +59,7 @@ class HttpConnector(BackendConnector):
         self._session = await self._exit_stack.enter_async_context(ClientSession(self._read_stream, self._write_stream))
         await self._session.initialize()
         self._connected = True
+        self._log.info("Connected to backend '%s' (transport=http, url=%s)", self._name, self._url)
 
     async def disconnect(self) -> None:
         if self._exit_stack is not None:
@@ -52,6 +68,8 @@ class HttpConnector(BackendConnector):
         self._session = None
         self._read_stream = None
         self._write_stream = None
+        if self._connected:
+            self._log.info("Disconnected from backend '%s'", self._name)
         self._connected = False
 
     async def list_tools(self) -> list[dict]:
@@ -71,9 +89,3 @@ class HttpConnector(BackendConnector):
             "content": content,
             "isError": getattr(result, "isError", False),
         }
-
-    async def health(self) -> bool:
-        try:
-            return self._connected and self._session is not None
-        except Exception:
-            return False

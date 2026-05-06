@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -324,7 +325,7 @@ def mcp_env_with_backends():
             {
                 "name": "echo",
                 "transport": "stdio",
-                "command": ["python", "-c", "pass"],
+                "command": [sys.executable, str(PROJECT_DIR / "tests" / "_echo_server.py")],
                 "description": "Echo server: returns text back as-is",
                 "read_only": True,
             },

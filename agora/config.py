@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 _DEFAULT_CONFIG = {
-    "agora": {"name": "Agora", "version": "0.1.0"},
+    "agora": {"name": "Agora", "version": "0.4.0"},
     "storage": {"chroma_path": "~/.agora/chroma", "db_path": "~/.agora/agora.db"},
     "cache": {"l1_max_entries": 1000, "l1_ttl_seconds": 300, "l2_max_entries": 10000, "l2_ttl_seconds": 86400},
     "embedding": {"provider": "sentence-transformers", "model": "all-MiniLM-L6-v2"},
@@ -21,13 +21,16 @@ class BackendConfig:
     description: str = ""
     read_only: bool = False
     timeout_seconds: float | None = None
+    max_retries: int = 3
+    retry_delay: float = 1.0
+    rate_limit_rps: float = 0.0
     env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
 class Config:
     name: str = "Agora"
-    version: str = "0.1.0"
+    version: str = "0.4.0"
     chroma_path: str = "~/.agora/chroma"
     db_path: str = "~/.agora/agora.db"
     l1_max_entries: int = 1000
@@ -84,6 +87,9 @@ class Config:
                     description=b.get("description", ""),
                     read_only=b.get("read_only", False),
                     timeout_seconds=b.get("timeout_seconds"),
+                    max_retries=b.get("max_retries", 3),
+                    retry_delay=b.get("retry_delay", 1.0),
+                    rate_limit_rps=b.get("rate_limit_rps", 0.0),
                     env=resolved_env,
                 )
             )
