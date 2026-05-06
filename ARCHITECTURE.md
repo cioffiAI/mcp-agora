@@ -760,13 +760,15 @@ mcp-agora/
 - [x] Clear L1+L2 su save/forget
 - [x] Test: 55 test su 9 file, tutti verdi
 
-### 🔲 Fase 4 — Robustezza (da fare)
+### ✅ Fase 4 — Robustezza (completata)
 
-- [ ] Health check backend
-- [ ] Retry configurabili (per-connector)
-- [ ] Rate limiting
-- [ ] Logging strutturato
-- [ ] Test: backend down → graceful degradation
+- [x] Health check backend (`registry.health_check_all`, status: healthy/unhealthy/dead)
+- [x] Retry configurabili (per-connector: `max_retries`, `retry_delay`)
+- [x] Rate limiting (`rate_limit_rps` per backend)
+- [x] Logging strutturato (file-based, `~/.agora/logs/agora.log`, configurable level via `LOG_LEVEL`)
+- [x] Startup non-bloccante: warmup in background thread, WarmingUpError grace su tool che usano embedding
+- [x] Test: 6 graceful degradation test (backend down, health check, retry, rate limit)
+- [x] Test: 61 test totali (10 file), tutti verdi
 
 ### 🔲 Fase 5 — Portfolio polish (da fare)
 

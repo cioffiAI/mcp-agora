@@ -1,21 +1,37 @@
+# Agora MCP Server — Configuration
+# Override path: AGORA_CONFIG=/path/to/config.yaml uv run agora
+
 agora:
   name: "Agora"
   version: "0.4.0"
 
+# Storage paths (ChromaDB for vector index, SQLite for provenance + L2 cache)
 storage:
-  chroma_path: "~/.agora/chroma"
-  db_path: "~/.agora/agora.db"
+  chroma_path: "~/.agora/chroma"       # Vector embeddings (ChromaDB PersistentClient)
+  db_path: "~/.agora/agora.db"         # SQLite: agents, provenance, L2 cache
 
+# Cache layers: L1 (in-memory TTLCache) + L2 (SQLite persistent, 24h TTL)
 cache:
-  l1_max_entries: 1000
-  l1_ttl_seconds: 300
-  l2_max_entries: 10000
-  l2_ttl_seconds: 86400
+  l1_max_entries: 1000                 # Max entries in L1 memory cache
+  l1_ttl_seconds: 300                  # TTL for L1 entries (5 minutes)
+  l2_max_entries: 10000                # Max entries in L2 SQLite cache
+  l2_ttl_seconds: 86400                # TTL for L2 entries (24 hours)
 
+# Embedding model (fully local, no API key required)
 embedding:
   provider: "sentence-transformers"
-  model: "all-MiniLM-L6-v2"
+  model: "all-MiniLM-L6-v2"           # 384 dimensions, ~80MB download
 
+# External MCP backends (declared here, connected lazily on first use)
+# Common fields per backend:
+#   command:          [executable, arg1, arg2, ...] for STDIO transport
+#   url:              endpoint URL for HTTP transport (mutually exclusive with command)
+#   read_only:        if true, write tools (create/delete/update) are blocked
+#   timeout_seconds:  timeout for backend connection and tool calls
+#   max_retries:      max retry attempts on transient errors
+#   retry_delay:      delay between retries in seconds
+#   rate_limit_rps:   max calls per second (0 = no limit)
+#   env:              extra environment variables ($VAR expansion supported)
 backends:
   - name: "github"
     transport: "stdio"

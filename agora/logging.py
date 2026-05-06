@@ -1,6 +1,6 @@
 import logging
 import os
-import sys
+from pathlib import Path
 
 
 def setup_logging(name: str = "agora") -> logging.Logger:
@@ -9,7 +9,10 @@ def setup_logging(name: str = "agora") -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(level)
     if not logger.handlers:
-        handler = logging.StreamHandler(sys.stderr)
+        log_dir = Path.home() / ".agora" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "agora.log"
+        handler = logging.FileHandler(str(log_file), encoding="utf-8")
         handler.setFormatter(
             logging.Formatter(
                 "%(asctime)s [%(levelname)s] %(name)s: %(message)s",

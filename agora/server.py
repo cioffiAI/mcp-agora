@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 import uuid
 from datetime import UTC, datetime
 
@@ -10,6 +11,7 @@ from agora.cache.l2_cache import L2Cache
 from agora.config import Config
 from agora.connectors.base import ReadOnlyBlockedError
 from agora.db.database import Database
+from agora.embedding.base import WarmingUpError
 from agora.embedding.sentence import SentenceTransformerProvider
 from agora.memory.vector_store import VectorStore
 from agora.registry import BackendRegistry
@@ -22,8 +24,7 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
 
     log.info("Initializing embedding provider: %s", cfg.embedding_model)
     embedding = SentenceTransformerProvider(model_name=cfg.embedding_model)
-    embedding.warmup()
-    log.info("Embedding model loaded (dim=%d)", embedding.dimension())
+    log.info("Embedding provider ready (lazy-load, warmup in background)")
 
     vector_store = VectorStore(
         path=str(cfg.resolved_chroma_path),
@@ -49,10 +50,20 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
     log.info("Registered %d backends: %s", len(cfg.backends), [b.name for b in cfg.backends])
 
     router = Router(registry, embedding)
-    router.warmup()
-    log.info("Router warmed up (%d backend embeddings)", len(cfg.backends))
+    log.info("Router ready (lazy warmup, %d backends)", len(cfg.backends))
 
     mcp = FastMCP(cfg.name)
+
+    def _background_warmup():
+        try:
+            embedding.warmup()
+            log.info("Background: embedding model loaded (dim=%d)", embedding.dimension())
+            router.warmup()
+            log.info("Background: router warmed up (%d backend embeddings)", len(router._backend_embeddings))
+        except Exception as e:
+            log.error("Background warmup failed: %s", e, exc_info=True)
+
+    threading.Thread(target=_background_warmup, daemon=True, name="agora-warmup").start()
 
     @mcp.tool()
     def agora_save(
@@ -70,7 +81,13 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
             "created_at": datetime.now(UTC).isoformat(),
             "agent": agent_name,
         }
-        ids = vector_store.add(texts=[content], metadata=[metadata], ids=[entry_id])
+        try:
+            ids = vector_store.add(texts=[content], metadata=[metadata], ids=[entry_id])
+        except WarmingUpError:
+            return {
+                "error": "Server is warming up. Embedding model is still loading. Please retry in a moment.",
+                "status": "warming_up",
+            }
         db.register_agent(agent_name)
         db.add_provenance(
             entry_id=entry_id,
@@ -122,7 +139,13 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
             log.debug("agora_query L2 HIT: query=%s", query[:60])
             return l2_cached
 
-        results = vector_store.query(query_texts=[query], n_results=top_k)
+        try:
+            results = vector_store.query(query_texts=[query], n_results=top_k)
+        except WarmingUpError:
+            return {
+                "error": "Server is warming up. Embedding model is still loading. Please retry in a moment.",
+                "status": "warming_up",
+            }
         response = {
             "query": query,
             "results": results,
@@ -151,6 +174,15 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
         if not query and not entry_id:
             return {"error": "Provide either 'query' or 'entry_id'"}
 
+        try:
+            return _crossref_impl(query, entry_id, top_k)
+        except WarmingUpError:
+            return {
+                "error": "Server is warming up. Embedding model is still loading. Please retry in a moment.",
+                "status": "warming_up",
+            }
+
+    def _crossref_impl(query: str, entry_id: str, top_k: int) -> dict:
         if entry_id:
             provenance = db.get_provenance(entry_id)
             if not provenance:
@@ -257,7 +289,13 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
 
     @mcp.tool()
     async def agora_route(target: str, tool: str, arguments: dict | None = None) -> dict:
-        connector, method, score = router.route(target)
+        try:
+            connector, method, score = router.route(target)
+        except WarmingUpError:
+            return {
+                "error": "Server is warming up. Embedding model is still loading. Please retry in a moment.",
+                "status": "warming_up",
+            }
         if connector is None:
             log.warning("agora_route: no backend matched target='%s' (method=%s, score=%.2f)", target, method, score)
             return {

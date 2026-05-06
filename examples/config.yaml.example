@@ -1,14 +1,39 @@
 agora:
   name: "Agora"
-  version: "0.1.0"
+  version: "0.4.0"
 
 storage:
   chroma_path: "~/.agora/chroma"
+  db_path: "~/.agora/agora.db"
 
 cache:
   l1_max_entries: 1000
   l1_ttl_seconds: 300
+  l2_max_entries: 10000
+  l2_ttl_seconds: 86400
 
 embedding:
   provider: "sentence-transformers"
   model: "all-MiniLM-L6-v2"
+
+backends:
+  - name: "github"
+    transport: "stdio"
+    command: ["npx", "-y", "@modelcontextprotocol/server-github"]
+    description: "GitHub API: issues, PRs, repos, code search, commits"
+    read_only: false
+    timeout_seconds: 15
+    max_retries: 3
+    retry_delay: 1.0
+    rate_limit_rps: 5
+    env:
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"
+  - name: "playwright"
+    transport: "stdio"
+    command: ["npx", "@playwright/mcp@latest"]
+    description: "Browser automation: navigate, click, screenshot, forms"
+    read_only: true
+    timeout_seconds: 30
+    max_retries: 2
+    retry_delay: 0.5
+    rate_limit_rps: 2

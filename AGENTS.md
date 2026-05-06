@@ -47,25 +47,28 @@ SQLite3       │  stdlib (provenance, agent registry, L2 cache)
 mcp-agora/
 ├── pyproject.toml
 ├── config.yaml
-├── AGAENTS.md
+├── README.md
+├── AGENTS.md
 ├── ARCHITECTURE.md
 ├── agora/
 │   ├── __init__.py
 │   ├── main.py              # Entry point: `agora` command
-│   ├── server.py            # FastMCP server + tool registration
+│   ├── server.py            # FastMCP server + 8 tool registration
 │   ├── config.py            # YAML config loader
+│   ├── logging.py           # File-based structured logging
 │   ├── registry.py          # BackendRegistry (lifecycle, lazy connect)
 │   ├── connectors/
 │   │   ├── __init__.py
-│   │   ├── base.py          # BackendConnector ABC
-│   │   └── stdio.py         # STDIO subprocess MCP client
+│   │   ├── base.py          # BackendConnector ABC + ReadOnlyBlockedError
+│   │   ├── stdio.py         # STDIO subprocess MCP client
+│   │   └── http.py          # Streamable HTTP MCP client
 │   ├── routing/
 │   │   ├── __init__.py
 │   │   └── router.py        # Semantic + exact name router
 │   ├── embedding/
 │   │   ├── __init__.py
-│   │   ├── base.py          # Abstract EmbeddingProvider
-│   │   └── sentence.py      # sentence-transformers wrapper
+│   │   ├── base.py          # Abstract EmbeddingProvider + WarmingUpError
+│   │   └── sentence.py      # sentence-transformers wrapper (lazy + background)
 │   ├── memory/
 │   │   ├── __init__.py
 │   │   └── vector_store.py  # ChromaDB PersistentClient wrapper
@@ -86,7 +89,9 @@ mcp-agora/
 │   ├── test_protocol.py
 │   ├── test_routing.py
 │   ├── test_connectors.py
-│   └── test_mcp_smoke.py
+│   ├── test_graceful.py     # Health check, retry, rate limit tests
+│   ├── test_mcp_smoke.py
+│   └── _echo_server.py      # Minimal FastMCP echo server for tests
 └── examples/
     └── config.yaml.example
 ```
@@ -139,6 +144,9 @@ def agora_status() -> dict:
 
 - Model: `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions)
 - Lazy loading: load model on first call, not on import
+- Background warmup: daemon thread loads model after server starts (non-blocking startup)
+- WarmingUpError: if model still loading, tools return `{"error": "...", "status": "warming_up"}` instead of blocking
+- Non-blocking lock: `threading.Lock.acquire(blocking=False)` — no deadlock on concurrent loads
 - Input limit: 256 word pieces (no chunking)
 - Store `~/.cache/agora/models/`
 
@@ -169,16 +177,19 @@ def agora_status() -> dict:
 
 - `config.yaml` with `pyyaml`
 - Use `Path.expanduser()` and `os.path.expandvars()` for all paths (Windows safety)
-- Default config minimal:
+- Default config:
   ```yaml
   agora:
     name: "Agora"
-    version: "0.1.0"
+    version: "0.4.0"
   storage:
     chroma_path: "~/.agora/chroma"
+    db_path: "~/.agora/agora.db"
   cache:
     l1_max_entries: 1000
     l1_ttl_seconds: 300
+    l2_max_entries: 10000
+    l2_ttl_seconds: 86400
   embedding:
     provider: "sentence-transformers"
     model: "all-MiniLM-L6-v2"
