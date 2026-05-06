@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: ${{ matrix.os }}
+
+      - run: uv sync --frozen --dev
+        name: Install dependencies
+
+      - run: uv run pytest tests/ -q
+        name: Run tests
+
+      - run: uv run ruff check .
+        name: Lint (ruff check)
+
+      - run: uv run ruff format --check .
+        name: Format check (ruff format)

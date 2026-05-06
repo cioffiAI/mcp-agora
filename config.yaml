@@ -1,55 +1,81 @@
-# Agora MCP Server — Configuration
+# MCP Agora — Configuration
+# =========================
 # Override path: AGORA_CONFIG=/path/to/config.yaml uv run agora
+#
+# This file controls all Agora settings: server identity, storage paths,
+# cache behavior, embedding model, and external MCP backends.
+#
+# Environment variables are expanded ($VAR or ${VAR}) in all string values.
 
+# ── Server Identity ───────────────────────────────────────────────────
+# Exposed via MCP tools/list and used in status responses.
 agora:
-  name: "Agora"
-  version: "0.4.0"
+  name: "Agora"                         # Human-readable server name
+  version: "0.4.0"                      # Semver — bump on tagged release
 
-# Storage paths (ChromaDB for vector index, SQLite for provenance + L2 cache)
+# ── Storage ───────────────────────────────────────────────────────────
+# Agora uses two persistent stores:
+#   ChromaDB  — vector embeddings for semantic search (single "knowledge" collection)
+#   SQLite    — relational tables for agent registry, provenance tracking, and L2 cache
+# Both paths support ~/ expansion and $ENV_VAR substitution.
 storage:
-  chroma_path: "~/.agora/chroma"       # Vector embeddings (ChromaDB PersistentClient)
-  db_path: "~/.agora/agora.db"         # SQLite: agents, provenance, L2 cache
+  chroma_path: "~/.agora/chroma"        # ChromaDB PersistentClient directory
+  db_path: "~/.agora/agora.db"          # SQLite: agents + provenance + l2_cache
 
-# Cache layers: L1 (in-memory TTLCache) + L2 (SQLite persistent, 24h TTL)
+# ── Cache ─────────────────────────────────────────────────────────────
+# Two-tier cache cascade: L1 (in-memory) → L2 (SQLite disk) → ChromaDB.
+# Cache key = SHA256 of full JSON-serialized request (all params, sort_keys=True).
+# On agora_save / agora_forget: full clear of both L1 and L2 (safe strategy).
 cache:
-  l1_max_entries: 1000                 # Max entries in L1 memory cache
-  l1_ttl_seconds: 300                  # TTL for L1 entries (5 minutes)
-  l2_max_entries: 10000                # Max entries in L2 SQLite cache
-  l2_ttl_seconds: 86400                # TTL for L2 entries (24 hours)
+  l1_max_entries: 1000                  # Max entries in L1 TTLCache
+  l1_ttl_seconds: 300                   # L1 TTL (seconds). Default: 5 min — frequent queries
+  l2_max_entries: 10000                 # Max entries in L2 SQLite cache
+  l2_ttl_seconds: 86400                 # L2 TTL (seconds). Default: 24h — expensive/long-lived
 
-# Embedding model (fully local, no API key required)
+# ── Embedding ─────────────────────────────────────────────────────────
+# Converts text to vectors for semantic search.
+# Default: sentence-transformers (fully local, free, no API key).
+# Model downloaded on first use (~80MB), cached in ~/.cache/agora/models/.
+# Lazy-loaded (not at import) + background warmup thread at server start.
 embedding:
-  provider: "sentence-transformers"
-  model: "all-MiniLM-L6-v2"           # 384 dimensions, ~80MB download
+  provider: "sentence-transformers"     # Provider name (pluggable interface)
+  model: "all-MiniLM-L6-v2"            # Model name. 384 dimensions, ~80MB disk
 
-# External MCP backends (declared here, connected lazily on first use)
-# Common fields per backend:
-#   command:          [executable, arg1, arg2, ...] for STDIO transport
-#   url:              endpoint URL for HTTP transport (mutually exclusive with command)
-#   read_only:        if true, write tools (create/delete/update) are blocked
-#   timeout_seconds:  timeout for backend connection and tool calls
-#   max_retries:      max retry attempts on transient errors
-#   retry_delay:      delay between retries in seconds
-#   rate_limit_rps:   max calls per second (0 = no limit)
-#   env:              extra environment variables ($VAR expansion supported)
+# ── External MCP Backends ─────────────────────────────────────────────
+# Backends declared here are registered at server start.
+# Connection is LAZY — established on first tool call, never at startup.
+# Each backend supports:
+#
+#   transport:       "stdio" (local subprocess) or "http" (streamable HTTP)
+#   command/url:     command array for STDIO, URL for HTTP (mutually exclusive)
+#   description:     used by the semantic router (cosine similarity on embeddings)
+#   read_only:       when true, blocks tools with mutative prefixes
+#                    (create_, delete_, update_, write_, set_, put_, patch_,
+#                     add_, remove_, edit_, send_, upload_)
+#   timeout_seconds: max wait for connect + tool call
+#   max_retries:     retry count on transient errors (ConnectionError, TimeoutError, OSError)
+#   retry_delay:     initial backoff (doubles each attempt: d, 2d, 4d... cap at 30s)
+#   rate_limit_rps:  max calls per second (0 = disabled)
+#   env:             extra environment variables with $VAR expansion
 backends:
   - name: "github"
     transport: "stdio"
     command: ["npx", "-y", "@modelcontextprotocol/server-github"]
     description: "GitHub API: issues, PRs, repos, code search, commits"
-    read_only: false
-    timeout_seconds: 15
-    max_retries: 3
-    retry_delay: 1.0
-    rate_limit_rps: 5
+    read_only: false                     # false = write tools allowed (create_*, etc.)
+    timeout_seconds: 15                  # GitHub API usually responds in <5s
+    max_retries: 3                       # retry on transient network errors
+    retry_delay: 1.0                     # 1s → 2s → 4s
+    rate_limit_rps: 5                    # max 5 calls/second (GitHub has 5000/hr)
     env:
-      GITHUB_TOKEN: "${GITHUB_TOKEN}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"    # Required — set via "gh auth token"
+
   - name: "playwright"
     transport: "stdio"
     command: ["npx", "@playwright/mcp@latest"]
     description: "Browser automation: navigate, click, screenshot, forms"
-    read_only: true
-    timeout_seconds: 30
-    max_retries: 2
-    retry_delay: 0.5
-    rate_limit_rps: 2
+    read_only: true                      # blocks all mutative tool prefixes
+    timeout_seconds: 30                  # browser actions can be slow
+    max_retries: 2                       # browser crashes are rare, 2 retries enough
+    retry_delay: 0.5                     # 0.5s → 1s
+    rate_limit_rps: 2                    # browser automation is local, no API limit

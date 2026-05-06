@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS l2_cache (
 CONFIG_YAML_EXAMPLE = r"""
 agora:
   name: "Agora"
-  version: "0.3.0"
+  version: "0.4.0"
 
 storage:
   chroma_path: "~/.agora/chroma"
@@ -198,8 +198,20 @@ backends:
     description: "GitHub API: issues, PRs, repos, code search"
     read_only: false
     timeout_seconds: 15
+    max_retries: 3
+    retry_delay: 1.0
+    rate_limit_rps: 5
     env:
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
+  - name: "playwright"
+    transport: "stdio"
+    command: ["npx", "@playwright/mcp@latest"]
+    description: "Browser automation: navigate, click, screenshot, forms"
+    read_only: true
+    timeout_seconds: 30
+    max_retries: 2
+    retry_delay: 0.5
+    rate_limit_rps: 2
 """
 
 COMMIT_LOG = """
@@ -211,8 +223,10 @@ e209f40  Add MIT License
 0c36648  feat: HTTP connector, read_only, broadcast, timeout
 b03abbe  fix: ReadOnlyBlockedError public, parallel broadcast
 dab75a2  feat: Phase 3 cross-agent memory
-49cb34d  WIP on master: Phase 3
-c2ee10c  index on master: Phase 3
+7f01873  docs: update ARCHITECTURE.md with Phase 2/3 details, add ruff linter, generate PDF
+c4aa01c  feat: Phase 4 robustness - logging, health check, retry, rate limit, graceful tests
+40e86f6  fix: non-blocking startup + WarmingUpError grace
+90765e8  chore: add *.log and chroma.sqlite3 to .gitignore
 """
 
 TEST_FILES = [
@@ -222,9 +236,10 @@ TEST_FILES = [
     ("test_l2_cache.py", 7, "Unit: L2 set/get/miss/expiry/hit_count/stats/clear/prune"),
     ("test_provenance.py", 7, "Unit: agent registry + provenance lifecycle"),
     ("test_protocol.py", 6, "Integration: FastMCP wiring, save->query, cache hit, L2 fallback"),
-    ("test_routing.py", 8, "Unit: cosine similarity, exact/semantic/no match, warmup"),
+    ("test_routing.py", 9, "Unit: cosine similarity, exact/semantic/no match, warmup"),
     ("test_connectors.py", 9, "Unit: STDIO/HTTP properties, timeout, health, read-only"),
-    ("test_mcp_smoke.py", 8, "Smoke: MCP ClientSession, full stack"),
+    ("test_graceful.py", 6, "Graceful: backend failure, health cascade, retry, rate limit"),
+    ("test_mcp_smoke.py", 4, "Smoke: MCP ClientSession, full stack"),
 ]
 
 STACK_TABLE = [
@@ -286,8 +301,8 @@ class AgoraPDF(FPDF):
             "(modello all-MiniLM-L6-v2, 384 dimensioni), SQLite per metadati e cache persistente, "
             "e FastMCP per l'esposizione di 8 tool MCP. L'architettura e' organizzata in 7 layer "
             "(Transport, Protocol, Router, Memory, Cache, Backend Connector, Embedding) con routing "
-            "semantico a backend MCP esterni (GitHub, Playwright). Il progetto conta 55 test automatici "
-            "distribuiti su 9 file, zero mock, con ChromaDB e SQLite reali in directory isolate."
+            "semantico a backend MCP esterni (GitHub, Playwright). Il progetto conta 61 test automatici "
+            "distribuiti su 10 file, zero mock, con ChromaDB e SQLite reali in directory isolate."
         )
         abstract_en = (
             "MCP Agora is a portfolio/learning project implementing an MCP Server "
@@ -296,8 +311,8 @@ class AgoraPDF(FPDF):
             "(all-MiniLM-L6-v2 model, 384 dimensions), SQLite for metadata and persistent cache, "
             "and FastMCP to expose 8 MCP tools. The architecture is organized into 7 layers "
             "(Transport, Protocol, Router, Memory, Cache, Backend Connector, Embedding) with semantic "
-            "routing to external MCP backends (GitHub, Playwright). The project has 55 automated tests "
-            "across 9 files, zero mocks, using real ChromaDB and SQLite in isolated temp directories."
+            "routing to external MCP backends (GitHub, Playwright). The project has 61 automated tests "
+            "across 10 files, zero mocks, using real ChromaDB and SQLite in isolated temp directories."
         )
         self.multi_cell(0, 5, abstract_it if self.lang == "it" else abstract_en, align="C")
         self.ln(5)
@@ -741,13 +756,10 @@ class AgoraPDF(FPDF):
                 "Il progetto adotta una strategia di test a 3 livelli: unit test (logica interna pura, "
                 "nessun MCP/subprocess), integration test (stesso processo, chiamate dirette a funzioni), "
                 "e MCP smoke test (via mcp.ClientSession reale su STDIO subprocess). "
-                "55 test distribuiti su 9 file, zero mock - ChromaDB e SQLite reali in directory "
+                "61 test distribuiti su 10 file, zero mock - ChromaDB e SQLite reali in directory "
                 "temporanee isolate per test (fixture pytest function-scoped con temp directory). "
                 "Timing non usato come metrica (flaky su Windows); si usa cache.stats()['hit_count'].",
-                "The project uses a 3-level testing strategy: unit tests (pure internal logic, "
-                "no MCP/subprocess), integration tests (same process, direct function calls), "
-                "and MCP smoke tests (via real mcp.ClientSession on STDIO subprocess). "
-                "55 tests across 9 files, zero mocks - real ChromaDB and SQLite in isolated temp "
+                "61 tests across 10 files, zero mocks - real ChromaDB and SQLite in isolated temp "
                 "directories per test (pytest function-scoped fixtures with temp directory). "
                 "Timing not used as metric (flaky on Windows); cache.stats()['hit_count'] is used instead.",
             )
@@ -796,6 +808,15 @@ class AgoraPDF(FPDF):
                     "agent/session/confidence params on save.",
                 ),
             ),
+            (
+                "Fase 4 - Robustness",
+                _(
+                    "Logging strutturato, health check backend (healthy/unhealthy/dead), "
+                    "retry configurabili, rate limiting, non-blocking startup, WarmingUpError grace.",
+                    "Structured logging, backend health checks (healthy/unhealthy/dead), "
+                    "configurable retry, rate limiting, non-blocking startup, WarmingUpError grace.",
+                ),
+            ),
         ]
         for title, desc in phases:
             self.set_font("Helvetica", "B", 10)
@@ -805,12 +826,10 @@ class AgoraPDF(FPDF):
         self.subsection("8.2", _("Roadmap Futura", "Future Roadmap"))
         for item in [
             _(
-                "Fase 4: Health check backend, retry/timeout configurabili, rate limiting, logging strutturato",
-                "Phase 4: Backend health checks, configurable retry/timeout, rate limiting, structured logging",
-            ),
-            _(
-                "Fase 5: README completo, esempi reali, pubblicazione GitHub + PyPI",
-                "Phase 5: Full README, real examples, GitHub + PyPI publication",
+                "Fase 5: README completo, esempi reali, pubblicazione GitHub + PyPI "
+                "(in corso)",
+                "Phase 5: Full README, real examples, GitHub + PyPI publication "
+                "(in progress)",
             ),
             _(
                 "Chunking: gestione documenti multi-paragrafo con split per boundary semantico",
@@ -826,7 +845,7 @@ class AgoraPDF(FPDF):
             ("Latenza cache hit", "< 50ms"),
             ("Copertura routing semantico", "> 70%"),
             ("Cross-agent knowledge reuse", "> 20%"),
-            ("55 test, 0 mock", "Viola? No, e' un fatto."),
+            ("61 test, 0 mock", "Viola? No, e' un fatto."),
         ]
         self.simple_table([_("Metrica", "Metric"), _("Target", "Target")], metrics, col_widths=[75, 115])
 
