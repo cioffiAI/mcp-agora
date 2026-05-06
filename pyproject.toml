@@ -10,7 +10,6 @@ dependencies = [
     "httpx",
     "mcp>=1.0.0",
     "pyyaml",
-    "fpdf2",
     "sentence-transformers>=3.0.0",
 ]
 

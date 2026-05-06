@@ -628,7 +628,6 @@ mcp-agora/
 ├── AGAENTS.md                  # Istruzioni per agenti AI
 ├── ARCHITECTURE.md             # Questo documento
 ├── docs/
-│   └── generate_pdf.py         # Generatore tesina PDF (ITA + EN)
 ├── agora/
 │   ├── __init__.py
 │   ├── main.py                 # Entry point: `agora` command
@@ -669,7 +668,8 @@ mcp-agora/
 │   ├── test_protocol.py        # Integration + MCP smoke
 │   └── test_mcp_smoke.py       # Full MCP smoke test
 ├── docs/
-│   └── tesina-mcp-agora-*.pdf  # PDF generati
+│   ├── architecture_en.svg     # Architettura (ENG)
+│   └── architecture_it.svg     # Architettura (ITA)
 └── examples/
     └── config.yaml.example
 ```
@@ -730,7 +730,6 @@ mcp-agora/
 - [x] GitHub Actions CI (test + lint su Ubuntu + Windows)
 - [x] Release GitHub v0.4.0 con changelog
 - [x] Pubblicazione PyPI: `pip install mcp-agora`
-- [x] PDF tesina aggiornato (v0.4.0, 61 test, 10 file, Phase 4)
 
 ---
 

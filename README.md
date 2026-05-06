@@ -68,7 +68,7 @@ uv run agora
 | GitHub Actions CI | ✅ Test + lint on push/PR (Ubuntu + Windows) |
 | GitHub release | ✅ v0.4.0 with changelog |
 | PyPI publication | ✅ `pip install mcp-agora` |
-| PDF architecture diagram | 🔲 Visual diagram (WIP) |
+| SVG architecture diagram | ✅ `docs/architecture_en.svg` + `docs/architecture_it.svg` |
 
 ---
 
