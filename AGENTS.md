@@ -220,8 +220,11 @@ Do NOT use timing as a metric in tests (flaky on Windows). Use `cache.stats()["h
 ## Command Reference
 
 ```bash
-# Run
+# Run (from source)
 uv run agora
+
+# Run (installed tool, recommended for MCP hosts)
+agora
 
 # Test
 uv run pytest tests/ -v
@@ -263,6 +266,13 @@ The project uses `@modelcontextprotocol/server-github` for GitHub operations.
 ### Playwright MCP (configured in opencode)
 
 The `@playwright/mcp` server is available for browser automation.
+
+### Agora MCP (opencode)
+
+Agora runs via `uv tool install mcp-agora` — the binary is at `~/.local/bin/agora.exe`.
+- Config: `command: ["agora"]` in `opencode.jsonc`
+- Config file: `~/.agora/config.yaml` (copied from project root on install)
+- Override via: `AGORA_CONFIG=/path/to/config.yaml`
 
 ## Related Documents
 

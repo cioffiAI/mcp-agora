@@ -123,12 +123,14 @@ Add to your MCP host config (e.g. `opencode.jsonc`):
   "mcp": {
     "agora": {
       "type": "local",
-      "command": ["uv", "run", "--directory", "/path/to/mcp-agora", "agora"],
+      "command": ["agora"],
       "enabled": true
     }
   }
 }
 ```
+
+> **Note**: Requires `uv tool install mcp-agora` first. The `agora` tool finds `~/.agora/config.yaml` automatically. Copy your config there to customize backends, or use `AGORA_CONFIG=/path/to/config.yaml`.
 
 ### Usage
 
@@ -226,7 +228,7 @@ backends:
     rate_limit_rps: 2
 ```
 
-Override config path: `AGORA_CONFIG=/path/to/config.yaml uv run agora`
+Override config path: `AGORA_CONFIG=/path/to/config.yaml agora`
 
 ---
 
