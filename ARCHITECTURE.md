@@ -122,55 +122,7 @@ Il risparmio economico è piccolo per modelli cheap, **ma il risparmio di tempo 
 
 ## Architettura a Layer
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                      TRANSPORT LAYER                       │
-│  STDIO (locale)  │  Streamable HTTP (remoto)               │
-│  JSON-RPC 2.0 over stdin/stdout or HTTP POST/SSE           │
-├────────────────────────────────────────────────────────────┤
-│                      PROTOCOL LAYER                         │
-│  MCP Primitives: tools/list, tools/call, resources/list,    │
-│  resources/read, prompts/get, notifications                 │
-├────────────────────────────────────────────────────────────┤
-│                      MEMORY LAYER                             │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │  VECTOR INDEX (ChromaDB — single "knowledge" coll.)  │    │
-│  │  embedding (384d) + metadata (tags, agent, timestamp) │    │
-│  └──────────────────────────────────────────────────────┘    │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │  RELATIONAL DB (SQLite)                              │    │
-│  │  agents | provenance | l2_cache                       │    │
-│  └──────────────────────────────────────────────────────┘    │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │  RELATIONAL DB (SQLite)                              │    │
-│  │  agent_registry | server_config | cache_metadata     │    │
-│  │  session_logs | token_usage | provenance             │    │
-│  └──────────────────────────────────────────────────────┘    │
-├──────────────────────────────────────────────────────────────┤
-│                      CACHE LAYER                              │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │  LRU Cache (in-memory)  │  Persistent Cache (disk)   │    │
-│  │  TTL: 5min (frequenti)  │  TTL: 24h (lenti/costosi)  │    │
-│  │  Max: 1000 entries      │  Max: 10000 entries         │    │
-│  └──────────────────────────────────────────────────────┘    │
-├──────────────────────────────────────────────────────────────┤
-│                    BACKEND CONNECTOR LAYER                    │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
-│  │ MCP Conn │ │ MCP Conn │ │ MCP Conn │ │ MCP Conn │       │
-│  │ (GitHub) │ │ (DB)     │ │ (FS)     │ │ (Custom) │       │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
-│                              │                               │
-│  Ogni connettore: STDIO o HTTP, autenticazione, retry,       │
-│  timeout, rate limiting                                      │
-├──────────────────────────────────────────────────────────────┤
-│                    EMBEDDING LAYER                            │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │  sentence-transformers (locale, gratis)              │    │
-│  │  oppure Ollama (locale, nomic-embed-text)            │    │
-│  │  oppure OpenAI ADA (remoto, opzionale)               │    │
-│  └──────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────┘
-```
+![MCP Agora Architecture Diagram](docs/architecture_en.svg)
 
 ---
 

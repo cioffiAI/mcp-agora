@@ -592,7 +592,15 @@ class AgoraPDF(FPDF):
         )
 
         self.subsection("3.1", _("Diagramma dell'Architettura", "Architecture Diagram"))
-        self.code(ARCH_DIAGRAM)
+        svg_path = os.path.join(
+            DOCS_DIR,
+            "architecture_it.svg" if self.lang == "it" else "architecture_en.svg",
+        )
+        if os.path.exists(svg_path):
+            self.image(svg_path, w=185)
+            self.ln(3)
+        else:
+            self.code(ARCH_DIAGRAM)
 
         self.subsection("3.2", _("Descrizione dei Layer", "Layer Description"))
         layers = [
