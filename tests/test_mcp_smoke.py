@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sys
@@ -9,6 +10,29 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+
+WARMUP_RETRIES = 60
+WARMUP_DELAY = 1.0
+
+
+async def wait_for_embedding(session: ClientSession) -> None:
+    for _ in range(WARMUP_RETRIES):
+        status = json.loads((await session.call_tool("agora_status", arguments={})).content[0].text)
+        if status.get("embedding", {}).get("ready"):
+            return
+        await asyncio.sleep(WARMUP_DELAY)
+
+
+async def safe_save(session: ClientSession, **kwargs) -> dict:
+    for attempt in range(WARMUP_RETRIES):
+        result = await session.call_tool("agora_save", arguments=kwargs)
+        data = json.loads(result.content[0].text)
+        if data.get("saved"):
+            return data
+        if data.get("status") != "warming_up":
+            return data
+        await asyncio.sleep(WARMUP_DELAY)
+    raise TimeoutError("Embedding model did not become ready in time")
 
 
 @pytest.fixture(scope="function")
@@ -66,15 +90,15 @@ async def test_mcp_full_smoke(server_params):
             assert "agents" in status
             assert "db_size_bytes" in status
 
+            # --- wait for embedding model ---
+            await wait_for_embedding(session)
+
             # --- agora_save ---
-            save_result = await session.call_tool(
-                "agora_save",
-                arguments={
-                    "content": "PostgreSQL BRIN indexes are useful for very large tables with correlated data",
-                    "tags": ["postgres", "sql", "performance"],
-                },
+            saved = await safe_save(
+                session,
+                content="PostgreSQL BRIN indexes are useful for very large tables with correlated data",
+                tags=["postgres", "sql", "performance"],
             )
-            saved = json.loads(save_result.content[0].text)
             assert saved["saved"] is True
             assert saved["id"].startswith("mem_")
 
@@ -103,7 +127,7 @@ async def test_mcp_full_smoke(server_params):
             assert status2["agents"]["total"] >= 1
 
             # --- save clears cache, so next query is fresh ---
-            await session.call_tool("agora_save", arguments={"content": "Redis Streams support consumer groups"})
+            await safe_save(session, content="Redis Streams support consumer groups")
             after_save = await session.call_tool(
                 "agora_query",
                 arguments={"query": "PostgreSQL indexing performance", "top_k": 5},
@@ -164,10 +188,10 @@ async def test_mcp_multiple_entries(server_params):
         async with ClientSession(read, write) as session:
             await session.initialize()
 
+            await wait_for_embedding(session)
             saved_ids = []
             for entry in entries:
-                result = await session.call_tool("agora_save", arguments={"content": entry})
-                data = json.loads(result.content[0].text)
+                data = await safe_save(session, content=entry)
                 assert data["saved"] is True
                 saved_ids.append(data["id"])
 
@@ -207,14 +231,11 @@ async def test_mcp_stress_save_and_query(server_params):
         async with ClientSession(read, write) as session:
             await session.initialize()
 
+            await wait_for_embedding(session)
             # Save all 15 entries
             saved_ids = []
             for content, tags in entries:
-                result = await session.call_tool(
-                    "agora_save",
-                    arguments={"content": content, "tags": tags},
-                )
-                data = json.loads(result.content[0].text)
+                data = await safe_save(session, content=content, tags=tags)
                 assert data["saved"] is True
                 assert data["id"].startswith("mem_")
                 saved_ids.append(data["id"])
@@ -287,12 +308,10 @@ async def test_mcp_stress_save_and_query(server_params):
             assert status["cache_stats"]["l1"]["hit_count"] >= 2
 
             # Save clears cache — verify by repeating a previously cached query
-            await session.call_tool(
-                "agora_save",
-                arguments={
-                    "content": "WebAssembly enables near-native performance in browsers",
-                    "tags": ["wasm", "performance"],
-                },
+            await safe_save(
+                session,
+                content="WebAssembly enables near-native performance in browsers",
+                tags=["wasm", "performance"],
             )
             q1_after_save = await session.call_tool(
                 "agora_query",
@@ -361,6 +380,9 @@ async def test_mcp_routing(server_params_with_backends):
             assert "agora_route" in tool_names
             assert "agora_backends" in tool_names
             assert "agora_broadcast" in tool_names
+
+            # --- wait for embedding model (needed for semantic routing) ---
+            await wait_for_embedding(session)
 
             # --- agora_backends lists configured backend (not connected) ---
             backends = json.loads((await session.call_tool("agora_backends", arguments={})).content[0].text)

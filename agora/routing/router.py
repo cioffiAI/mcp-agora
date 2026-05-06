@@ -36,20 +36,20 @@ class Router:
         self._warmup()
 
     def route(self, target: str) -> tuple[BackendConnector | None, str, float]:
-        self._warmup()
         if not target.strip():
             return None, "none", 0.0
 
         target_stripped = target.strip().lower()
 
-        # 1. Exact name match (case-insensitive)
+        # 1. Exact name match (case-insensitive) — no embeddings needed
         for backend in self._registry.list_backends():
             if backend.name.lower() == target_stripped:
                 connector = self._registry.get_connector(backend.name)
                 if connector is not None:
                     return connector, "exact", 1.0
 
-        # 2. Semantic match
+        # 2. Semantic match — requires embeddings
+        self._warmup()
         if not self._backend_embeddings:
             return None, "none", 0.0
 

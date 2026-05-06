@@ -398,6 +398,10 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
         return {
             "server": "Agora",
             "version": cfg.version,
+            "embedding": {
+                "model": cfg.embedding_model,
+                "ready": embedding.is_ready(),
+            },
             "memory_entries": vector_store.count(),
             "agents": {
                 "total": len(agents_list),
