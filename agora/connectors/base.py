@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 
-_READ_TOOL_PREFIXES = ("list_", "get_", "fetch_", "read_", "search_", "find_",
-                       "query_", "describe_", "show_")
+_READ_TOOL_PREFIXES = ("list_", "get_", "fetch_", "read_", "search_", "find_", "query_", "describe_", "show_")
 
 
 class ReadOnlyBlockedError(Exception):
@@ -9,8 +8,9 @@ class ReadOnlyBlockedError(Exception):
 
 
 class BackendConnector(ABC):
-    def __init__(self, name: str, description: str, read_only: bool,
-                 transport: str = "stdio", timeout: float = 30.0) -> None:
+    def __init__(
+        self, name: str, description: str, read_only: bool, transport: str = "stdio", timeout: float = 30.0
+    ) -> None:
         self._name = name
         self._description = description
         self._read_only = read_only

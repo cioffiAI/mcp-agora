@@ -30,6 +30,7 @@ class VectorStore:
     def add(self, texts: list[str], metadata: list[dict] | None = None, ids: list[str] | None = None):
         if ids is None:
             import uuid
+
             ids = [str(uuid.uuid4()) for _ in texts]
         embeddings = None
         if self._embedding_provider:
@@ -55,12 +56,14 @@ class VectorStore:
         )
         out = []
         for i in range(len(results["ids"][0])):
-            out.append({
-                "id": results["ids"][0][i],
-                "text": results["documents"][0][i],
-                "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                "score": results["distances"][0][i] if results["distances"] else 0.0,
-            })
+            out.append(
+                {
+                    "id": results["ids"][0][i],
+                    "text": results["documents"][0][i],
+                    "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                    "score": results["distances"][0][i] if results["distances"] else 0.0,
+                }
+            )
         return out
 
     def delete(self, ids: list[str]):

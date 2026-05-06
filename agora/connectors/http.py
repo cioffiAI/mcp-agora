@@ -7,9 +7,15 @@ from agora.connectors.base import BackendConnector
 
 
 class HttpConnector(BackendConnector):
-    def __init__(self, name: str, description: str, read_only: bool,
-                 url: str, headers: dict[str, str] | None = None,
-                 timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        read_only: bool,
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout: float = 30.0,
+    ) -> None:
         super().__init__(name, description, read_only, transport="http", timeout=timeout)
         self._url = url
         self._headers = headers or {}
@@ -35,9 +41,7 @@ class HttpConnector(BackendConnector):
         )
         transport = await self._exit_stack.enter_async_context(client)
         self._read_stream, self._write_stream, _ = transport
-        self._session = await self._exit_stack.enter_async_context(
-            ClientSession(self._read_stream, self._write_stream)
-        )
+        self._session = await self._exit_stack.enter_async_context(ClientSession(self._read_stream, self._write_stream))
         await self._session.initialize()
         self._connected = True
 
@@ -54,8 +58,7 @@ class HttpConnector(BackendConnector):
         session = await self._ensure_session()
         tools_result = await session.list_tools()
         return [
-            {"name": t.name, "description": t.description, "inputSchema": t.inputSchema}
-            for t in tools_result.tools
+            {"name": t.name, "description": t.description, "inputSchema": t.inputSchema} for t in tools_result.tools
         ]
 
     async def _call_tool_impl(self, tool_name: str, arguments: dict) -> dict:

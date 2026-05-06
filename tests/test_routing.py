@@ -11,12 +11,14 @@ class MockEmbedding:
         return 4
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        return [[
-            sum(ord(c) for c in texts[0][:20]) / 1000,
-            0.5,
-            0.3,
-            0.1,
-        ]]
+        return [
+            [
+                sum(ord(c) for c in texts[0][:20]) / 1000,
+                0.5,
+                0.3,
+                0.1,
+            ]
+        ]
 
 
 def test_cosine_similarity_identical():
@@ -34,18 +36,22 @@ def test_cosine_similarity_zero_vector():
 
 def test_exact_name_match():
     registry = BackendRegistry()
-    registry.register(BackendConfig(
-        name="github",
-        description="GitHub API: issues, PRs, repos",
-        command=["npx", "server-github"],
-        read_only=False,
-    ))
-    registry.register(BackendConfig(
-        name="playwright",
-        description="Browser automation",
-        command=["npx", "playwright"],
-        read_only=False,
-    ))
+    registry.register(
+        BackendConfig(
+            name="github",
+            description="GitHub API: issues, PRs, repos",
+            command=["npx", "server-github"],
+            read_only=False,
+        )
+    )
+    registry.register(
+        BackendConfig(
+            name="playwright",
+            description="Browser automation",
+            command=["npx", "playwright"],
+            read_only=False,
+        )
+    )
     router = Router(registry, MockEmbedding())
     router.warmup()
 
@@ -58,12 +64,14 @@ def test_exact_name_match():
 
 def test_case_insensitive_exact():
     registry = BackendRegistry()
-    registry.register(BackendConfig(
-        name="GitHub",
-        description="GitHub API",
-        command=["npx", "server-github"],
-        read_only=False,
-    ))
+    registry.register(
+        BackendConfig(
+            name="GitHub",
+            description="GitHub API",
+            command=["npx", "server-github"],
+            read_only=False,
+        )
+    )
     router = Router(registry, MockEmbedding())
     router.warmup()
 
@@ -74,18 +82,22 @@ def test_case_insensitive_exact():
 
 def test_semantic_match():
     registry = BackendRegistry()
-    registry.register(BackendConfig(
-        name="github",
-        description="GitHub API: issues, PRs, repos, code search, commits",
-        command=["npx", "server-github"],
-        read_only=False,
-    ))
-    registry.register(BackendConfig(
-        name="playwright",
-        description="Browser automation: navigate, click, screenshot",
-        command=["npx", "playwright"],
-        read_only=False,
-    ))
+    registry.register(
+        BackendConfig(
+            name="github",
+            description="GitHub API: issues, PRs, repos, code search, commits",
+            command=["npx", "server-github"],
+            read_only=False,
+        )
+    )
+    registry.register(
+        BackendConfig(
+            name="playwright",
+            description="Browser automation: navigate, click, screenshot",
+            command=["npx", "playwright"],
+            read_only=False,
+        )
+    )
     router = Router(registry, MockEmbedding())
     router.warmup()
 
@@ -97,12 +109,14 @@ def test_semantic_match():
 
 def test_no_match():
     registry = BackendRegistry()
-    registry.register(BackendConfig(
-        name="github",
-        description="GitHub API",
-        command=["npx", "server-github"],
-        read_only=False,
-    ))
+    registry.register(
+        BackendConfig(
+            name="github",
+            description="GitHub API",
+            command=["npx", "server-github"],
+            read_only=False,
+        )
+    )
     router = Router(registry, MockEmbedding())
     router.warmup()
 
@@ -123,12 +137,14 @@ def test_empty_registry():
 
 def test_warmup_populates_embeddings():
     registry = BackendRegistry()
-    registry.register(BackendConfig(
-        name="github",
-        description="GitHub API",
-        command=["npx", "server-github"],
-        read_only=False,
-    ))
+    registry.register(
+        BackendConfig(
+            name="github",
+            description="GitHub API",
+            command=["npx", "server-github"],
+            read_only=False,
+        )
+    )
     router = Router(registry, MockEmbedding())
     router.warmup()
     assert len(router._backend_embeddings) == 1

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from mcp import ClientSession
-from mcp.client.stdio import stdio_client, StdioServerParameters
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
@@ -24,6 +24,7 @@ def mcp_env():
     }
     config_path = Path(tmp) / "config.yaml"
     import yaml
+
     with open(config_path, "w") as f:
         yaml.dump(config, f)
     return config_path
@@ -67,8 +68,10 @@ async def test_mcp_full_smoke(server_params):
             # --- agora_save ---
             save_result = await session.call_tool(
                 "agora_save",
-                arguments={"content": "PostgreSQL BRIN indexes are useful for very large tables with correlated data",
-                           "tags": ["postgres", "sql", "performance"]},
+                arguments={
+                    "content": "PostgreSQL BRIN indexes are useful for very large tables with correlated data",
+                    "tags": ["postgres", "sql", "performance"],
+                },
             )
             saved = json.loads(save_result.content[0].text)
             assert saved["saved"] is True
@@ -174,9 +177,7 @@ async def test_mcp_multiple_entries(server_params):
             data = json.loads(result.content[0].text)
             assert len(data["results"]) >= 1
             texts = [r["text"] for r in data["results"]]
-            has_db_related = any(
-                "PostgreSQL" in t or "Redis" in t for t in texts
-            )
+            has_db_related = any("PostgreSQL" in t or "Redis" in t for t in texts)
             assert has_db_related, f"No relevant results among: {texts}"
 
 
@@ -287,7 +288,10 @@ async def test_mcp_stress_save_and_query(server_params):
             # Save clears cache — verify by repeating a previously cached query
             await session.call_tool(
                 "agora_save",
-                arguments={"content": "WebAssembly enables near-native performance in browsers", "tags": ["wasm", "performance"]},
+                arguments={
+                    "content": "WebAssembly enables near-native performance in browsers",
+                    "tags": ["wasm", "performance"],
+                },
             )
             q1_after_save = await session.call_tool(
                 "agora_query",
@@ -328,6 +332,7 @@ def mcp_env_with_backends():
     }
     config_path = Path(tmp) / "config.yaml"
     import yaml
+
     with open(config_path, "w") as f:
         yaml.dump(config, f)
     return config_path

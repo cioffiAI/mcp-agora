@@ -1,7 +1,6 @@
 import hashlib
 import json
 import threading
-from collections.abc import Callable
 
 from cachetools import TTLCache
 
@@ -22,13 +21,15 @@ class L1Cache:
         self._miss_count = 0
 
     def get(self, tool: str, query: str, top_k: int, model: str, collection: str = "knowledge") -> dict | None:
-        key = _cache_key({
-            "tool": tool,
-            "collection": collection,
-            "query": query,
-            "top_k": top_k,
-            "model": model,
-        })
+        key = _cache_key(
+            {
+                "tool": tool,
+                "collection": collection,
+                "query": query,
+                "top_k": top_k,
+                "model": model,
+            }
+        )
         with self._lock:
             result = self._cache.get(key, _MISS_SENTINEL)
             if result is not _MISS_SENTINEL:
@@ -38,13 +39,15 @@ class L1Cache:
             return None
 
     def set(self, tool: str, query: str, top_k: int, model: str, value: dict, collection: str = "knowledge"):
-        key = _cache_key({
-            "tool": tool,
-            "collection": collection,
-            "query": query,
-            "top_k": top_k,
-            "model": model,
-        })
+        key = _cache_key(
+            {
+                "tool": tool,
+                "collection": collection,
+                "query": query,
+                "top_k": top_k,
+                "model": model,
+            }
+        )
         with self._lock:
             self._cache[key] = value
 

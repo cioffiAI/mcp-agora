@@ -21,14 +21,22 @@ class Router:
         self._registry = registry
         self._embedding = embedding_provider
         self._backend_embeddings: dict[str, list[float]] = {}
+        self._warmed_up = False
 
-    def warmup(self) -> None:
+    def _warmup(self) -> None:
+        if self._warmed_up:
+            return
         for backend in self._registry.list_backends():
             if backend.description:
                 emb = self._embedding.embed([backend.description])[0]
                 self._backend_embeddings[backend.name] = emb
+        self._warmed_up = True
+
+    def warmup(self) -> None:
+        self._warmup()
 
     def route(self, target: str) -> tuple[BackendConnector | None, str, float]:
+        self._warmup()
         if not target.strip():
             return None, "none", 0.0
 
@@ -57,6 +65,6 @@ class Router:
         if best_score >= SEMANTIC_THRESHOLD and best_name is not None:
             connector = self._registry.get_connector(best_name)
             if connector is not None:
-                return connector, f"semantic", best_score
+                return connector, "semantic", best_score
 
         return None, "none", best_score

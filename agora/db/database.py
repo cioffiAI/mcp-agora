@@ -1,8 +1,7 @@
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -58,10 +57,8 @@ class Database:
     def register_agent(self, agent: str, agent_type: str = "unknown") -> dict:
         conn = self._connection()
         try:
-            now = datetime.now(timezone.utc).isoformat()
-            row = conn.execute(
-                "SELECT * FROM agents WHERE id = ?", (agent,)
-            ).fetchone()
+            now = datetime.now(UTC).isoformat()
+            row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent,)).fetchone()
             if row:
                 conn.execute(
                     "UPDATE agents SET last_seen = ?, sessions_count = sessions_count + 1 WHERE id = ?",
@@ -69,7 +66,8 @@ class Database:
                 )
             else:
                 conn.execute(
-                    "INSERT INTO agents (id, name, agent_type, first_seen, last_seen, sessions_count) VALUES (?, ?, ?, ?, ?, 1)",
+                    "INSERT INTO agents (id, name, agent_type, first_seen, last_seen, sessions_count) "
+                    "VALUES (?, ?, ?, ?, ?, 1)",
                     (agent, agent, agent_type, now, now),
                 )
             conn.commit()
@@ -80,9 +78,7 @@ class Database:
     def get_agent(self, agent: str) -> dict | None:
         conn = self._connection()
         try:
-            row = conn.execute(
-                "SELECT * FROM agents WHERE id = ?", (agent,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent,)).fetchone()
             if row is None:
                 return None
             return dict(row)
@@ -117,9 +113,11 @@ class Database:
     def add_provenance(self, entry_id: str, source_agent: str, source_session: str, confidence: float = 0.5):
         conn = self._connection()
         try:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             conn.execute(
-                "INSERT OR REPLACE INTO provenance (entry_id, source_agent, source_session, confidence, created_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO provenance "
+                "(entry_id, source_agent, source_session, confidence, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (entry_id, source_agent, source_session, confidence, now),
             )
             conn.commit()
@@ -129,9 +127,7 @@ class Database:
     def get_provenance(self, entry_id: str) -> dict | None:
         conn = self._connection()
         try:
-            row = conn.execute(
-                "SELECT * FROM provenance WHERE entry_id = ?", (entry_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM provenance WHERE entry_id = ?", (entry_id,)).fetchone()
             if row is None:
                 return None
             return dict(row)
@@ -173,7 +169,7 @@ class Database:
     def l2_get(self, cache_key: str) -> dict | None:
         conn = self._connection()
         try:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             row = conn.execute(
                 "SELECT * FROM l2_cache WHERE cache_key = ? AND expires_at > ?",
                 (cache_key, now),
@@ -192,12 +188,12 @@ class Database:
     def l2_set(self, cache_key: str, result_json: str, ttl_seconds: int = 86400):
         conn = self._connection()
         try:
-            now = datetime.now(timezone.utc).isoformat()
-            expires_at = datetime.fromtimestamp(
-                time.time() + ttl_seconds, tz=timezone.utc
-            ).isoformat()
+            now = datetime.now(UTC).isoformat()
+            expires_at = datetime.fromtimestamp(time.time() + ttl_seconds, tz=UTC).isoformat()
             conn.execute(
-                "INSERT OR REPLACE INTO l2_cache (cache_key, result_json, ttl_seconds, hit_count, created_at, expires_at) VALUES (?, ?, ?, 0, ?, ?)",
+                "INSERT OR REPLACE INTO l2_cache "
+                "(cache_key, result_json, ttl_seconds, hit_count, created_at, expires_at) "
+                "VALUES (?, ?, ?, 0, ?, ?)",
                 (cache_key, result_json, ttl_seconds, now, expires_at),
             )
             conn.commit()
@@ -207,7 +203,7 @@ class Database:
     def l2_prune_expired(self) -> int:
         conn = self._connection()
         try:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             cursor = conn.execute("DELETE FROM l2_cache WHERE expires_at <= ?", (now,))
             conn.commit()
             return cursor.rowcount
@@ -228,7 +224,7 @@ class Database:
             total = conn.execute("SELECT COUNT(*) FROM l2_cache").fetchone()[0]
             expired = conn.execute(
                 "SELECT COUNT(*) FROM l2_cache WHERE expires_at <= ?",
-                (datetime.now(timezone.utc).isoformat(),),
+                (datetime.now(UTC).isoformat(),),
             ).fetchone()[0]
             total_hits = conn.execute("SELECT COALESCE(SUM(hit_count), 0) FROM l2_cache").fetchone()[0]
             total_size = conn.execute("SELECT COALESCE(SUM(LENGTH(result_json)), 0) FROM l2_cache").fetchone()[0]

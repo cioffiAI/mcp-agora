@@ -4,7 +4,6 @@ from pathlib import Path
 
 import yaml
 
-
 _DEFAULT_CONFIG = {
     "agora": {"name": "Agora", "version": "0.1.0"},
     "storage": {"chroma_path": "~/.agora/chroma", "db_path": "~/.agora/agora.db"},
@@ -75,19 +74,19 @@ class Config:
         backends = []
         for b in backends_raw:
             env_raw = b.get("env", {})
-            resolved_env = {
-                k: os.path.expandvars(v) for k, v in env_raw.items()
-            } if env_raw else {}
-            backends.append(BackendConfig(
-                name=b.get("name", ""),
-                transport=b.get("transport", "stdio"),
-                command=b.get("command"),
-                url=b.get("url"),
-                description=b.get("description", ""),
-                read_only=b.get("read_only", False),
-                timeout_seconds=b.get("timeout_seconds"),
-                env=resolved_env,
-            ))
+            resolved_env = {k: os.path.expandvars(v) for k, v in env_raw.items()} if env_raw else {}
+            backends.append(
+                BackendConfig(
+                    name=b.get("name", ""),
+                    transport=b.get("transport", "stdio"),
+                    command=b.get("command"),
+                    url=b.get("url"),
+                    description=b.get("description", ""),
+                    read_only=b.get("read_only", False),
+                    timeout_seconds=b.get("timeout_seconds"),
+                    env=resolved_env,
+                )
+            )
         return cls(
             name=a.get("name", "Agora"),
             version=a.get("version", "0.1.0"),

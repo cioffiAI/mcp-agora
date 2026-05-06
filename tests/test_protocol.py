@@ -1,5 +1,6 @@
 import gc
 import tempfile
+from datetime import UTC
 
 import pytest
 
@@ -35,12 +36,12 @@ def fresh_server():
 
 def test_save_knowledge(fresh_server):
     _, embedding, vs, cache, db, l2_cache = fresh_server
-    from datetime import datetime, timezone
     import uuid
+    from datetime import datetime
 
     content = "PostgreSQL BRIN indexes are useful for very large tables"
-    entry_id = f"mem_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    metadata = {"tags": "postgres,sql", "created_at": datetime.now(timezone.utc).isoformat(), "agent": "test"}
+    entry_id = f"mem_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    metadata = {"tags": "postgres,sql", "created_at": datetime.now(UTC).isoformat(), "agent": "test"}
     ids = vs.add(texts=[content], metadata=[metadata], ids=[entry_id])
     cache.clear()
     assert ids[0] == entry_id
@@ -51,9 +52,9 @@ def test_save_then_query(fresh_server):
 
     content = "Agora is an MCP server for persistent cross-agent memory"
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    entry_id = f"mem_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    entry_id = f"mem_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     vs.add(texts=[content], ids=[entry_id])
 
     results = vs.query(query_texts=["MCP server persistent memory"], n_results=5)
@@ -131,11 +132,11 @@ def test_save_with_provenance(fresh_server):
     _, embedding, vs, cache, db, l2_cache = fresh_server
 
     content = "MCP Agora is a cross-agent memory server"
-    from datetime import datetime, timezone
     import uuid
+    from datetime import datetime
 
-    entry_id = f"mem_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    metadata = {"tags": "mcp,memory", "created_at": datetime.now(timezone.utc).isoformat(), "agent": "codex"}
+    entry_id = f"mem_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    metadata = {"tags": "mcp,memory", "created_at": datetime.now(UTC).isoformat(), "agent": "codex"}
     vs.add(texts=[content], metadata=[metadata], ids=[entry_id])
     db.register_agent("codex")
     db.add_provenance(entry_id=entry_id, source_agent="codex", source_session="session-abc", confidence=0.9)

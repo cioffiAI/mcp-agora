@@ -3,15 +3,22 @@ import os
 from contextlib import AsyncExitStack
 
 from mcp import ClientSession
-from mcp.client.stdio import stdio_client, StdioServerParameters
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from agora.connectors.base import BackendConnector
 
 
 class StdioConnector(BackendConnector):
-    def __init__(self, name: str, description: str, read_only: bool,
-                 command: list[str], env: dict[str, str] | None = None,
-                 cwd: str | None = None, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        read_only: bool,
+        command: list[str],
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+        timeout: float = 30.0,
+    ) -> None:
         super().__init__(name, description, read_only, transport="stdio", timeout=timeout)
         self._command = command
         self._env_overrides = env or {}
@@ -46,12 +53,11 @@ class StdioConnector(BackendConnector):
                     ClientSession(self._read_stream, self._write_stream)
                 )
                 await self._session.initialize()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await self._exit_stack.aclose()
             self._exit_stack = None
             raise ConnectionError(
-                f"Timeout ({self._timeout}s) connecting to backend '{self._name}'. "
-                f"Is the backend running?"
+                f"Timeout ({self._timeout}s) connecting to backend '{self._name}'. Is the backend running?"
             )
         self._connected = True
 
@@ -68,8 +74,7 @@ class StdioConnector(BackendConnector):
         session = await self._ensure_session()
         tools_result = await session.list_tools()
         return [
-            {"name": t.name, "description": t.description, "inputSchema": t.inputSchema}
-            for t in tools_result.tools
+            {"name": t.name, "description": t.description, "inputSchema": t.inputSchema} for t in tools_result.tools
         ]
 
     async def _call_tool_impl(self, tool_name: str, arguments: dict) -> dict:

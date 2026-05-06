@@ -1,7 +1,6 @@
 import asyncio
-import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from mcp.server.fastmcp import FastMCP
 
@@ -41,13 +40,19 @@ def create_server(config: Config | None = None) -> FastMCP:
     mcp = FastMCP(cfg.name)
 
     @mcp.tool()
-    def agora_save(content: str, tags: list[str] | None = None, agent: str | None = None, session: str | None = None, confidence: float = 0.5) -> dict:
-        entry_id = f"mem_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    def agora_save(
+        content: str,
+        tags: list[str] | None = None,
+        agent: str | None = None,
+        session: str | None = None,
+        confidence: float = 0.5,
+    ) -> dict:
+        entry_id = f"mem_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         agent_name = agent or "unknown"
         session_id = session or str(uuid.uuid4())
         metadata = {
             "tags": ",".join(tags) if tags else "",
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "agent": agent_name,
         }
         ids = vector_store.add(texts=[content], metadata=[metadata], ids=[entry_id])
@@ -172,7 +177,12 @@ def create_server(config: Config | None = None) -> FastMCP:
         }
 
     @mcp.tool()
-    def agora_forget(entry_ids: list[str] | None = None, tags: list[str] | None = None, agent: str | None = None, dry_run: bool = False) -> dict:
+    def agora_forget(
+        entry_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+        agent: str | None = None,
+        dry_run: bool = False,
+    ) -> dict:
         if not entry_ids and not tags and not agent:
             return {"error": "Provide at least one of: entry_ids, tags, agent"}
 
@@ -275,13 +285,15 @@ def create_server(config: Config | None = None) -> FastMCP:
     def agora_backends() -> dict:
         backends = []
         for b in registry.list_backends():
-            backends.append({
-                "name": b.name,
-                "description": b.description,
-                "transport": b.transport,
-                "read_only": b.read_only,
-                "connected": registry.is_connected(b.name),
-            })
+            backends.append(
+                {
+                    "name": b.name,
+                    "description": b.description,
+                    "transport": b.transport,
+                    "read_only": b.read_only,
+                    "connected": registry.is_connected(b.name),
+                }
+            )
         return {"backends": backends}
 
     @mcp.tool()
@@ -306,7 +318,7 @@ def create_server(config: Config | None = None) -> FastMCP:
                 "connected": connected_count,
             },
             "db_size_bytes": db.db_size_bytes(),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
     return mcp

@@ -1,6 +1,3 @@
-import tempfile
-from pathlib import Path
-
 from agora.cache.l1_memory import L1Cache
 
 
@@ -21,6 +18,7 @@ def test_expiry():
     cache = L1Cache(maxsize=100, ttl=1)
     cache.set("agora.query", "test", 5, "test-model", {"result": "data"})
     import time
+
     time.sleep(1.5)
     result = cache.get("agora.query", "test", 5, "test-model")
     assert result is None

@@ -22,15 +22,13 @@ Build an MCP Server that allows AI agents (Claude Code, Codex, ChatGPT, Gemini C
 - Share memory across agents and sessions
 - Cache frequent queries in-memory (TTLCache)
 
-### Non-goals (Phase 1-2; some implemented in Phase 3)
+### Non-goals
 
 - Semantic broadcasting / fan-out
-- **Phase 3: SQLite db layer (provenance, agent registry, L2 cache)**
 - Chunking (save short entries only, ≤256 word pieces)
-- **Phase 3: Cache L2 persistent disk (SQLite-backed, 24h TTL)**
 - Docker, RBAC, auth, scaling
 
-## Architecture Stack (Phase 3)
+## Architecture Stack (corrente)
 
 ```
 Python 3.13+  │  uv 0.11+
@@ -74,17 +72,17 @@ mcp-agora/
 │   ├── cache/
 │   │   ├── __init__.py
 │   │   ├── l1_memory.py     # TTLCache in-memory
-│   │   └── l2_cache.py      # SQLite-backed persistent cache (Phase 3)
+│   │   └── l2_cache.py      # SQLite-backed persistent cache
 │   └── db/
 │       ├── __init__.py
-│       └── database.py      # SQLite: agents, provenance, L2 cache (Phase 3)
+│       └── database.py      # SQLite: agents, provenance, L2 cache
 ├── tests/
 │   ├── __init__.py
 │   ├── test_embedding.py
 │   ├── test_memory.py
 │   ├── test_cache.py
-│   ├── test_l2_cache.py     # L2 persistent cache tests (Phase 3)
-│   ├── test_provenance.py   # Provenance + agent registry tests (Phase 3)
+│   ├── test_l2_cache.py     # L2 persistent cache tests
+│   ├── test_provenance.py   # Provenance + agent registry tests
 │   ├── test_protocol.py
 │   ├── test_routing.py
 │   ├── test_connectors.py
@@ -97,7 +95,7 @@ mcp-agora/
 
 ### FastMCP (NOT low-level Server)
 
-Use `FastMCP` from `mcp.server.fastmcp`. Do NOT use `mcp.server.Server` directly in Phase 1, 2, or 3.
+Use `FastMCP` from `mcp.server.fastmcp`. Do NOT use `mcp.server.Server` directly.
 
 ```python
 from mcp.server.fastmcp import FastMCP
@@ -141,14 +139,14 @@ def agora_status() -> dict:
 
 - Model: `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions)
 - Lazy loading: load model on first call, not on import
-- Input limit: 256 word pieces (no chunking in Phase 1)
+- Input limit: 256 word pieces (no chunking)
 - Store `~/.cache/agora/models/`
 
 ### ChromaDB
 
 - Use `chromadb.PersistentClient(path=...)`
 - Default path: `~/.agora/chroma`
-- Single collection "knowledge" in Phase 1
+- Single collection "knowledge"
 - NO duckdb+parquet fallback — if ChromaDB fails, stop and debug
 - Router creates its own collection "backends" on warmup for backend description embeddings
 
@@ -193,8 +191,8 @@ def agora_status() -> dict:
    - `test_memory.py`: add → query → delete → verify
    - `test_cache.py`: set → get → expire → stats
    - `test_routing.py`: cosine similarity, exact/semantic/no match, warmup
-   - `test_l2_cache.py`: L2 set/get/expiry/hit_count/stats/clear (Phase 3)
-   - `test_provenance.py`: agent registry, provenance add/get/list/delete (Phase 3)
+   - `test_l2_cache.py`: L2 set/get/expiry/hit_count/stats/clear
+   - `test_provenance.py`: agent registry, provenance add/get/list/delete
 
 2. **Integration test** (same process, direct function calls):
    - `test_protocol.py`: call `save_knowledge()` then `query_knowledge()` directly
@@ -220,8 +218,12 @@ uv run pytest tests/ -v
 # Single test
 uv run pytest tests/test_cache.py -v -k "test_hit_count"
 
-# Lint (when added)
+# Lint
 uv run ruff check .
+uv run ruff format --check .
+
+# Format
+uv run ruff format .
 ```
 
 ## Key Decisions (do not change without discussion)
@@ -230,11 +232,11 @@ uv run ruff check .
 |----------|-----------|
 | FastMCP not low-level Server | Faster development, cleaner code |
 | ChromaDB not SQLite-VSS | More established, better docs |
-| no db/ layer in Phase 1 | Avoid premature abstractions |
-| cache clear-all on save | Simple, safe, sufficient for Phase 1 |
+| SQLite per provenance + L2 | Relational metadata separate from vector index |
+| cache clear-all on save | Simple, safe, sufficient |
 | no semantic cache | Two similar queries can be semantically different |
-| all-MiniLM-L6-v2 | 384d, lightweight, good enough for Phase 1 |
-| STDIO only in Phase 1 | Streamable HTTP adds complexity without value yet |
+| all-MiniLM-L6-v2 | 384d, lightweight, good enough |
+| STDIO + HTTP connectors | STDIO for local agents, Streamable HTTP for remote |
 | lazy backend connect | No startup cost for idle backends |
 | semantic + exact name router | Exact match tried first, semantic fallback (≥0.5) |
 

@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 from agora.embedding.base import EmbeddingProvider
@@ -10,16 +11,20 @@ class SentenceTransformerProvider(EmbeddingProvider):
     def __init__(self, model_name: str = _MODEL_NAME):
         self._model_name = model_name
         self._model = None
+        self._lock = threading.Lock()
 
     def _load(self):
         if self._model is not None:
             return
-        from sentence_transformers import SentenceTransformer
+        with self._lock:
+            if self._model is not None:
+                return
+            from sentence_transformers import SentenceTransformer
 
-        self._model = SentenceTransformer(
-            self._model_name,
-            cache_folder=str(_CACHE_DIR),
-        )
+            self._model = SentenceTransformer(
+                self._model_name,
+                cache_folder=str(_CACHE_DIR),
+            )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         self._load()

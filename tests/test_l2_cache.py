@@ -29,6 +29,7 @@ def test_l2_expiry():
     cache = L2Cache(db, ttl_seconds=1)
     cache.set("agora.query", "test", 5, "test-model", {"result": "data"})
     import time
+
     time.sleep(1.5)
     result = cache.get("agora.query", "test", 5, "test-model")
     assert result is None
@@ -73,6 +74,7 @@ def test_l2_prune_expired():
     cache = L2Cache(db, ttl_seconds=0)
     cache.set("agora.query", "a", 5, "test-model", {"result": "a"})
     import time
+
     time.sleep(0.1)
     cache.prune_expired()
     stats = cache.stats()

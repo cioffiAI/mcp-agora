@@ -5,6 +5,7 @@ from agora.memory.vector_store import VectorStore
 
 try:
     from agora.embedding.sentence import SentenceTransformerProvider
+
     HAS_EMBEDDING = True
 except Exception:
     HAS_EMBEDDING = False

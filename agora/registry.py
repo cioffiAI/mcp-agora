@@ -28,9 +28,7 @@ class BackendRegistry:
         if config.transport == "stdio":
             cmd = config.command or []
             if not cmd:
-                raise ValueError(
-                    f"STDIO backend '{config.name}' requires a 'command' in config"
-                )
+                raise ValueError(f"STDIO backend '{config.name}' requires a 'command' in config")
             return StdioConnector(
                 name=config.name,
                 description=config.description,
@@ -41,9 +39,7 @@ class BackendRegistry:
             )
         if config.transport == "http":
             if not config.url:
-                raise ValueError(
-                    f"HTTP backend '{config.name}' requires a 'url' field in config"
-                )
+                raise ValueError(f"HTTP backend '{config.name}' requires a 'url' field in config")
             return HttpConnector(
                 name=config.name,
                 description=config.description,
@@ -51,9 +47,7 @@ class BackendRegistry:
                 url=config.url,
                 timeout=timeout,
             )
-        raise ValueError(
-            f"Unsupported transport '{config.transport}' for backend '{config.name}'"
-        )
+        raise ValueError(f"Unsupported transport '{config.transport}' for backend '{config.name}'")
 
     def list_backends(self) -> list[BackendConfig]:
         return list(self._configs.values())

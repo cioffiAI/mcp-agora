@@ -132,22 +132,14 @@ Il risparmio economico è piccolo per modelli cheap, **ma il risparmio di tempo 
 │  MCP Primitives: tools/list, tools/call, resources/list,    │
 │  resources/read, prompts/get, notifications                 │
 ├────────────────────────────────────────────────────────────┤
-│                      ROUTER LAYER                            │
-│  ┌──────────┐  ┌──────────┐                                  │
-│  │Semantic  │  │ Static   │                                  │
-│  │Router    │  │ Router   │                                  │
-│  └────┬─────┘  └────┬─────┘                                  │
-│       │              │                                        │
-│       └──────────────┘                                        │
-│                       │                                       │
-├───────────────────────┴──────────────────────────────────────┤
 │                      MEMORY LAYER                             │
 │  ┌──────────────────────────────────────────────────────┐    │
-│  │  VECTOR INDEX (ChromaDB)                             │    │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐   │    │
-│  │  │Session  │ │Tool Call│ │Knowledge│ │Cross-   │   │    │
-│  │  │Logs     │ │Results  │ │Entries  │ │Refs     │   │    │
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘   │    │
+│  │  VECTOR INDEX (ChromaDB — single "knowledge" coll.)  │    │
+│  │  embedding (384d) + metadata (tags, agent, timestamp) │    │
+│  └──────────────────────────────────────────────────────┘    │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │  RELATIONAL DB (SQLite)                              │    │
+│  │  agents | provenance | l2_cache                       │    │
 │  └──────────────────────────────────────────────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐    │
 │  │  RELATIONAL DB (SQLite)                              │    │
@@ -202,28 +194,36 @@ Espone le primitive MCP standard che ogni agente si aspetta:
 {
   "tools": [
     {
-      "name": "agora.query",
-      "description": "Query semantica su tutta la conoscenza memorizzata. Cerca nel vector index + cache, poi opzionalmente sui backend configurati."
+      "name": "agora.save",
+      "description": "Salva conoscenza nella memoria persistente (ChromaDB + provenance SQLite). Supporta tags, agent name, session ID, confidence score."
     },
     {
-      "name": "agora.save",
-      "description": "Salva un risultato/contestualizzazione nella memoria persistente. Indicizzato automaticamente per ricerca futura."
+      "name": "agora.query",
+      "description": "Cerca conoscenza per similarità semantica. Cache cascade: L1 (TTLCache 5min) → L2 (SQLite 24h) → ChromaDB."
     },
     {
       "name": "agora.route",
-      "description": "Invia una richiesta a uno specifico MCP server backend, scelto per nome o per similarità semantica."
+      "description": "Invia una richiesta a uno specifico backend MCP, scelto per nome esatto o similarità semantica (soglia ≥0.5). Read-only enforcement su backend marcati."
+    },
+    {
+      "name": "agora.broadcast",
+      "description": "Invia un tool a TUTTI i backend registrati in parallelo via asyncio.gather. Errori raccolti per-backend."
+    },
+    {
+      "name": "agora.backends",
+      "description": "Elenca i backend MCP registrati con nome, descrizione, transport (STDIO/HTTP), flag read_only, stato connessione."
     },
     {
       "name": "agora.crossref",
-      "description": "Trova correlazioni tra informazioni memorizzate da agenti diversi o sessioni diverse."
+      "description": "Riferimenti incrociati tra agenti: per query (raggruppa per agente) o per entry_id (trova entry simili da altri agenti)."
     },
     {
       "name": "agora.forget",
-      "description": "Elimina specifiche voci di memoria (privacy, correzioni, dati obsoleti)."
+      "description": "Cancella entry per ID, tags, o agente. Supporta dry_run per anteprima senza cancellare."
     },
     {
       "name": "agora.status",
-      "description": "Restituisce stato della flotta: server connessi, statistiche cache, agenti attivi."
+      "description": "Stato completo: entry in memoria, agenti registrati, cache stats (L1+L2), backend connessi, dimensione DB."
     }
   ]
 }
@@ -326,15 +326,13 @@ Agora indicizza automaticamente ciò che passa, ma con cautele:
 
 **Regola**: la cache scade sempre. La knowledge è permanente solo se salvata esplicitamente con `agora.save`. I log di sessione e i tool results non diventano mai "knowledge" automaticamente.
 
-#### Sotto-layer Relazionale
+#### Sotto-layer Relazionale (SQLite)
 
 | Tabella | Colonne | Scopo |
 |---|---|---|
-| `agents` | id, name, type, first_seen, last_seen | Registry agenti conosciuti |
-| `servers` | id, name, transport, config, healthy | Backend MCP configurati |
-| `cache_index` | key, hash, ttl, size, hits, created_at, expires_at | Metadata cache |
-| `provenance` | entry_id, source_agent, source_session, confidence | Tracciabilità informazioni |
-| `token_usage` | agent, session, date, input_tok, output_tok | Analytics consumo |
+| `agents` | name, first_seen, last_seen | Registry agenti conosciuti (auto-registrazione su `agora.save`) |
+| `provenance` | entry_id, source_agent, source_session, confidence, created_at | Tracciabilità di ogni entry salvata |
+| `l2_cache` | cache_key, result_json, expires_at, hit_count | Cache persistente L2 (SHA256 key, 24h TTL, hit tracking) |
 
 #### Strategia di retention
 
@@ -362,8 +360,8 @@ Richiesta agente → check cache (hash richiesta)
 **Nota**: "zero token" si riferisce ai token di computazione/risposta del backend MCP. L'agente che riceve il risultato cached deve comunque leggerlo nel suo contesto. Il risparmio è sulla **chiamata backend**, non sul totale dei token processati dall'agente.
 
 **Tipi di cache:**
-1. **L1: In-memory TTLCache** — 1000 entry, TTL 5 min. Per richieste frequenti identiche. Usa `cachetools.TTLCache` (non LRUCache diretto, già ha scadenza built-in).
-2. **L2: Persistent disk** — 10000 entry, TTL 24h. Per risultati costosi (Fase 3+).
+1. **L1: In-memory TTLCache** — 1000 entry, TTL 5 min. Per richieste frequenti identiche. Usa `cachetools.TTLCache`.
+2. **L2: Persistent disk (SQLite)** — 10000 entry, TTL 24h. Per risultati costosi. Cache key SHA256, hit tracking, prune expired all'avvio.
 
 **Cache key**: include TUTTI i parametri della richiesta, non solo query e tool:
 ```
@@ -394,38 +392,24 @@ Ogni MCP server backend è rappresentato da un connettore.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  Backend Connector (interfaccia astratta)                  │
+│  BackendConnector (ABC)                                    │
 │                                                            │
-│  + connect() → bool                                        │
-│  + disconnect() → void                                     │
-│  + list_tools() → Tool[]                                   │
-│  + call_tool(name, args) → Result                          │
-│  + health() → HealthStatus                                 │
-│  + is_read_only() → bool   ← DISTINZIONE CRITICA          │
-│  + description → str (per routing semantico)               │
-│                                                            │
-│  Proprietà:                                                │
-│  - max_retries: 3                                          │
-│  - timeout: 30s                                            │
-│  - rate_limit: 10 req/s (configurabile)                    │
-│  - auth_method: none | bearer | api_key                    │
+│  + name → str                                              │
+│  + description → str                                       │
+│  + read_only → bool          ← DISTINZIONE CRITICA        │
+│  + connect() → None                                         │
+│  + disconnect() → None                                      │
+│  + call_tool(name, args) → dict                            │
 └────────────────────────────────────────────────────────────┘
 ```
 
-**DISTINZIONE READ-ONLY vs MUTATIVI**: ogni tool backend è marcato come `read_only` o `mutative`. Questo determina:
-- Se può essere chiamato in broadcasting (solo read-only)
-- Se i suoi risultati vanno cached (sì per read-only, no per mutativi)
-- Se partecipa al routing semantico broadcast (solo read-only)
+**Read-only enforcement**: i backend possono essere marcati `read_only: true` in config.yaml. Quando un tool chiamato via `agora_route` o `agora_broadcast` inizia con prefisso mutativo (`create_*`, `delete_*`, `update_*`, `write_*`, `set_*`, `put_*`, `patch_*`, `add_*`, `remove_*`, `edit_*`, `send_*`, `upload_*`), viene bloccato con `ReadOnlyBlockedError`.
 
 **Connettori built-in:**
-- STDIO Connector: lancia processi locali (npx, uvx, python)
-- HTTP Connector: Streamable HTTP per server remoti
+- `StdioConnector`: lancia processi locali (npx, uvx, python) con `asyncio.timeout` su connect
+- `HttpConnector`: Streamable HTTP per server remoti via MCP SDK `streamablehttp_client`
 
-**Health check:**
-- Ping ogni 30 secondi
-- 3 fallimenti consecutivi → segna come unhealthy
-- Reconnect automatico ogni 60 secondi
-- Notifica all'agente su `agora.status` se un backend è giù
+**Registry & lazy connect**: i backend sono registrati in `BackendRegistry` alla partenza. La connessione è **lazy** — avviene solo al primo `call_tool()`. Nessun costo di startup per backend inattivi.
 
 ### 7. Embedding Layer
 
@@ -463,68 +447,33 @@ doc_b = "SQLite is a lightweight embedded database"
 
 ---
 
-## Schema Relazionale
+## Schema Relazionale (implementato)
 
 ```sql
--- Registry agenti che hanno interagito con Agora
-CREATE TABLE agents (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL,
-    agent_type      TEXT NOT NULL,
-    first_seen      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_seen       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    sessions_count  INTEGER DEFAULT 0,
-    total_tokens    INTEGER DEFAULT 0
+-- Registry agenti (auto-registrati su agora.save)
+CREATE TABLE IF NOT EXISTS agents (
+    name       TEXT PRIMARY KEY,
+    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Backend MCP configurati
-CREATE TABLE servers (
-    id            TEXT PRIMARY KEY,
-    name          TEXT NOT NULL,
-    transport     TEXT NOT NULL CHECK(transport IN ('stdio', 'http')),
-    config_json   TEXT NOT NULL,
-    description   TEXT NOT NULL,
-    embedding     BLOB,
-    is_healthy    BOOLEAN DEFAULT TRUE,
-    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+-- Tracciabilità di ogni entry salvata
+CREATE TABLE IF NOT EXISTS provenance (
+    entry_id       TEXT PRIMARY KEY,
+    source_agent   TEXT NOT NULL,
+    source_session TEXT NOT NULL,
+    confidence     REAL DEFAULT 0.5,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Metadati cache
-CREATE TABLE cache_index (
-    cache_key    TEXT PRIMARY KEY,
-    result_hash  TEXT NOT NULL,
-    ttl_seconds  INTEGER NOT NULL DEFAULT 86400,
-    size_bytes   INTEGER NOT NULL,
-    hit_count    INTEGER DEFAULT 0,
-    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    expires_at   TIMESTAMP DEFAULT (CURRENT_TIMESTAMP)
-);
-
--- Tracciabilità della conoscenza
-CREATE TABLE provenance (
-    entry_id        TEXT NOT NULL,
-    source_agent    TEXT NOT NULL REFERENCES agents(id),
-    source_session  TEXT NOT NULL,
-    confidence      REAL DEFAULT 0.5,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (entry_id, source_agent, source_session)
-);
-
--- Analytics consumo token
-CREATE TABLE token_usage (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id      TEXT NOT NULL REFERENCES agents(id),
-    session_id    TEXT NOT NULL,
-    date          DATE NOT NULL DEFAULT CURRENT_DATE,
-    input_tok     INTEGER NOT NULL,
-    output_tok    INTEGER NOT NULL,
-    cached_hit    BOOLEAN DEFAULT FALSE,
-    tool_name     TEXT,
-    backend_id    TEXT REFERENCES servers(id)
+-- Cache persistente L2
+CREATE TABLE IF NOT EXISTS l2_cache (
+    cache_key  TEXT PRIMARY KEY,
+    result     TEXT NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    hit_count  INTEGER DEFAULT 0
 );
 ```
-
-**Nota**: `cache_index.expires_at` è calcolato a livello applicativo (`created_at + ttl_seconds`), non con sintassi PostgreSQL. SQLite non supporta `INTERVAL` o `GENERATED ALWAYS AS` con espressioni temporali.
 
 ---
 
@@ -665,7 +614,6 @@ Agente                    Agora
 | **Test MCP via STDIO fragili**: subprocess + stdio su Windows | Test instabili | Test priority: logica interna > integration diretta > MCP smoke. Timing non usato come metrica |
 | **Knowledge lunghe troncate**: modello tronca input > 256 word pieces | Perdita di contenuto | Documentare limite in Fase 1; chunking in Fase 2+ |
 | **Cache invalidation difficile**: invalidare solo entry correlate | Cache sporca | In Fase 1: clear globale su `agora.save`. Semplice e sicuro |
-| **Troppi file vuoti**: struttura sembra più complessa di quanto è | Percezione errata | In Fase 1 solo file necessari; niente db/, router/, connectors/ |
 | **Config path Windows**: `~/.agora/` non sempre espanso correttamente | Path sbagliati | Usare `Path.expanduser()` + `os.path.expandvars()` sempre |
 
 ---
@@ -702,114 +650,131 @@ Gerarchia: logica interna pura → integration → MCP smoke → reale con Claud
 
 ---
 
-## Stack Tecnologico
+## Stack Tecnologico (corrente)
 
 | Componente | Tecnologia | Perché |
 |---|---|---|
-| Linguaggio | Python 3.11+ | MCP SDK ufficiale, ecosistema AI maturo |
-| MCP SDK | `mcp` (PyPI) | SDK ufficiale Anthropic — usare `FastMCP` per Fase 1 (non low-level Server) |
-| Vector Store | ChromaDB | Zero config, zero cloud, perfetto per MVP |
-| Embeddings | sentence-transformers (default) | Gratis, locale, 384d sufficiente per MVP |
-| DB Relazionale | SQLite | Zero config, file-based, sufficiente per MVP |
-| Cache L1 | `cachetools.TTLCache` | Libreria standard, TTL built-in |
-| Cache L2 | SQLite (stessa istanza) | Evita dipendenze esterne |
-| Async | asyncio + anyio | MCP SDK è async |
-| Testing | pytest + pytest-asyncio | Testing MCP richiede async |
-| HTTP Server | uvicorn + starlette | Per Streamable HTTP transport |
+| Linguaggio | Python 3.13+ | MCP SDK ≥1.0.0 richiede Python moderno |
+| MCP SDK | `mcp>=1.0.0` (FastMCP) | SDK ufficiale Anthropic — FastMCP, non low-level Server |
+| Vector Store | ChromaDB (PersistentClient) | Zero config, zero cloud, ANN index HNSW |
+| Embeddings | sentence-transformers all-MiniLM-L6-v2 | Gratis, locale, 384d, caching ~/.cache/agora/models/ |
+| DB Relazionale | SQLite3 (stdlib) | Zero config, file-based, 3 tabelle |
+| Cache L1 | `cachetools.TTLCache` (1000, 5min) | TTL built-in, hit tracking |
+| Cache L2 | SQLite stessa istanza (10000, 24h) | Persistente su disco, SHA256 key |
+| Async | asyncio | MCP SDK è async; `asyncio.gather` per broadcast |
+| Testing | pytest + pytest-asyncio | 55 test, 9 file, 3 livelli (unit/integration/smoke) |
+| Linter | ruff (da aggiungere) | Velocissimo, replacement per flake8 + isort |
 
 ---
 
-## Struttura del Progetto (Fase 1)
-
-Solo i file necessari. Niente router, connectors, db/ o chunking in Fase 1.
+## Struttura del Progetto (corrente)
 
 ```
 mcp-agora/
 ├── pyproject.toml              # Metadati, dipendenze, scripts
-├── README.md
-├── LICENSE
-├── config.yaml                 # Configurazione Agora
+├── config.yaml                 # Configurazione Agora (v0.3.0)
 ├── AGAENTS.md                  # Istruzioni per agenti AI
-├── ARCHITECTURE.md
+├── ARCHITECTURE.md             # Questo documento
+├── docs/
+│   └── generate_pdf.py         # Generatore tesina PDF (ITA + EN)
 ├── agora/
 │   ├── __init__.py
 │   ├── main.py                 # Entry point: `agora` command
-│   ├── server.py               # FastMCP server + tool registration
-│   ├── config.py               # Caricamento config YAML
+│   ├── server.py               # FastMCP server + 8 tool registration
+│   ├── config.py               # YAML config loader (Path.expanduser)
+│   ├── registry.py             # BackendRegistry (lifecycle, lazy connect)
+│   ├── connectors/
+│   │   ├── __init__.py
+│   │   ├── base.py             # BackendConnector ABC
+│   │   └── stdio.py            # STDIO subprocess MCP client
+│   ├── routing/
+│   │   ├── __init__.py
+│   │   └── router.py           # Semantic + exact name router
 │   ├── embedding/
 │   │   ├── __init__.py
-│   │   ├── base.py             # Interfaccia astratta EmbeddingProvider
-│   │   └── sentence.py         # sentence-transformers (all-MiniLM-L6-v2)
+│   │   ├── base.py             # Abstract EmbeddingProvider
+│   │   └── sentence.py         # sentence-transformers wrapper
 │   ├── memory/
 │   │   ├── __init__.py
 │   │   └── vector_store.py     # ChromaDB PersistentClient wrapper
-│   └── cache/
+│   ├── cache/
+│   │   ├── __init__.py
+│   │   ├── l1_memory.py        # TTLCache in-memory (L1)
+│   │   └── l2_cache.py         # SQLite-backed persistent cache (L2)
+│   └── db/
 │       ├── __init__.py
-│       └── l1_memory.py        # TTLCache in-memory
-│
+│       └── database.py         # SQLite: agents, provenance, l2_cache
 ├── tests/
 │   ├── __init__.py
-│   ├── test_embedding.py       # Dimensione vettori, similarità documenti
+│   ├── _echo_server.py         # Echo server per test routing
+│   ├── test_embedding.py       # Dimensione vettori, similarità
 │   ├── test_memory.py          # ChromaDB add/query/delete
-│   ├── test_cache.py           # TTLCache set/get/scadenza/stats
-│   └── test_protocol.py        # MCP smoke test (tools/list), integration save→query
-│
+│   ├── test_cache.py           # TTLCache L1
+│   ├── test_l2_cache.py        # L2 persistent cache (Phase 3)
+│   ├── test_provenance.py      # Agent registry + provenance
+│   ├── test_routing.py         # Cosine similarity, routing
+│   ├── test_connectors.py      # Connector properties, timeout, HTTP
+│   ├── test_protocol.py        # Integration + MCP smoke
+│   └── test_mcp_smoke.py       # Full MCP smoke test
+├── docs/
+│   └── tesina-mcp-agora-*.pdf  # PDF generati
 └── examples/
     └── config.yaml.example
 ```
 
-I moduli per router, connectors, db/, chunker, provenance, retention saranno aggiunti nelle fasi successive quando servono davvero.
-
 ---
 
-## Roadmap MVP
+## Roadmap e Stato
 
-### Fase 1 — Single-agent memory (1 settimana)
-
-**Approccio**: prima la logica interna (embedding → ChromaDB → cache), poi FastMCP wrapper, poi test.
+### ✅ Fase 1 — Single-agent memory (completata)
 
 - [x] Struttura progetto, ARCHITECTURE.md
-- [x] pyproject.toml, uv init, dipendenze (mcp, chromadb, sentence-transformers, cachetools, pyyaml)
-- [ ] Config YAML + `config.py` (caricamento configurazione con pyyaml)
-- [ ] Embedding layer: `base.py` (interfaccia) + `sentence.py` (all-MiniLM-L6-v2, lazy loading)
-- [ ] ChromaDB wrapper: `vector_store.py` (PersistentClient, collection "knowledge")
-- [ ] Cache L1: `l1_memory.py` (TTLCache con cache key completa)
-- [ ] FastMCP server: `server.py` con due tool (`agora.save`, `agora.query`)
-- [ ] Entry point: `main.py` → comando `agora`
-- [ ] Test unitari: embedding, memory, cache (logica interna pura, senza MCP)
-- [ ] Test integration: save → query via Python (stesso processo)
-- [ ] Test MCP smoke: tools/list, tools/call via MCP client
-- [ ] Test reale: Claude Code / Codex → salva e recupera conoscenza
+- [x] pyproject.toml, uv init, dipendenze
+- [x] Config YAML + `config.py`
+- [x] Embedding layer: `base.py` + `sentence.py` (all-MiniLM-L6-v2, lazy loading)
+- [x] ChromaDB wrapper: `vector_store.py`
+- [x] Cache L1: `l1_memory.py` (TTLCache, cache key SHA256 completa)
+- [x] FastMCP server: `server.py` con `agora.save` + `agora.query`
+- [x] Entry point: `main.py` → comando `agora`
+- [x] Test: embedding, memory, cache, integration, MCP smoke (55 test totali)
 
-### Fase 2 — Routing + Backend Connectors (1 settimana)
-- [ ] Semantic Router (embedding descrizioni backend)
-- [ ] Static Router (regole YAML)
-- [ ] Connector STDIO (lancia processi npm/pip)
-- [ ] Connector HTTP (server remoti)
-- [ ] Distinzione read-only/mutative
-- [ ] Test: Agora → route a GitHub MCP → risultato
+### ✅ Fase 2 — Routing + Backend Connectors (completata)
 
-### Fase 3 — Cross-agent memory (3-4 giorni)
-- [ ] Provenance tracking
-- [ ] Cache L2 persistente (SQLite)
-- [ ] Tool `agora.crossref`
-- [ ] Tool `agora.forget`
-- [ ] Test: Agente A salva → Agente B recupera → provenance corretta
+- [x] Semantic Router (cosine similarity su descrizioni backend)
+- [x] Router: exact name match + semantic fallback (soglia ≥0.5)
+- [x] Connector STDIO (subprocess MCP client, asyncio.timeout)
+- [x] Connector HTTP (streamable HTTP via MCP SDK)
+- [x] Read-only enforcement via prefix heuristic
+- [x] BackendRegistry: lazy connect, double-connect guard
+- [x] Tool `agora.route`, `agora.broadcast`, `agora.backends`
+- [x] Test: routing, connectors, echo server
 
-### Fase 4 — Robustezza (3-4 giorni)
+### ✅ Fase 3 — Cross-agent memory (completata)
+
+- [x] SQLite: tabella `agents` (registry), `provenance` (tracciabilità), `l2_cache`
+- [x] Cache L2 persistente (SQLite-backed, 24h TTL, hit tracking)
+- [x] Cache cascade: L1 → L2 → ChromaDB
+- [x] Tool `agora.crossref` (per query o per entry_id)
+- [x] Tool `agora.forget` (per entry_ids, tags, agent; dry_run support)
+- [x] `agora_status`: cache stats, agenti, backends, db_size
+- [x] Clear L1+L2 su save/forget
+- [x] Test: 55 test su 9 file, tutti verdi
+
+### 🔲 Fase 4 — Robustezza (da fare)
+
 - [ ] Health check backend
-- [ ] Retry + timeout configurabili
+- [ ] Retry configurabili (per-connector)
 - [ ] Rate limiting
 - [ ] Logging strutturato
-- [ ] `agora.status`
 - [ ] Test: backend down → graceful degradation
 
-### Fase 5 — Portfolio polish (2-3 giorni)
+### 🔲 Fase 5 — Portfolio polish (da fare)
+
 - [ ] README con architettura, esempi
-- [ ] Config YAML commentato
+- [ ] Config YAML completamente commentato
 - [ ] Quickstart in 3 comandi
 - [ ] Pubblicazione GitHub + PyPI
-- [ ] Esempi reali: "Collega 4 agenti in 5 minuti"
+- [ ] PDF tesina: diagramma architettura visivo (invece di ASCII)
 
 ---
 
