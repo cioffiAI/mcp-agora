@@ -770,13 +770,15 @@ mcp-agora/
 - [x] Test: 6 graceful degradation test (backend down, health check, retry, rate limit)
 - [x] Test: 61 test totali (10 file), tutti verdi
 
-### 🔲 Fase 5 — Portfolio polish (da fare)
+### ✅ Fase 5 — Portfolio polish (completata)
 
-- [ ] README con architettura, esempi
-- [ ] Config YAML completamente commentato
-- [ ] Quickstart in 3 comandi
-- [ ] Pubblicazione GitHub + PyPI
-- [ ] PDF tesina: diagramma architettura visivo (invece di ASCII)
+- [x] README con architettura, esempi, quickstart one-liner
+- [x] Config YAML completamente commentato (ogni campo spiegato)
+- [x] Install script: `scripts/install.ps1` + `scripts/install.sh`
+- [x] GitHub Actions CI (test + lint su Ubuntu + Windows)
+- [x] Release GitHub v0.4.0 con changelog
+- [x] Pubblicazione PyPI: `pip install mcp-agora`
+- [x] PDF tesina aggiornato (v0.4.0, 61 test, 10 file, Phase 4)
 
 ---
 

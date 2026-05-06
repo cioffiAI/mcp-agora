@@ -58,15 +58,17 @@ uv run agora
 - **6 graceful degradation tests** — Backend failure, health cascade, retry, rate limit
 - **61 tests** across 10 files, all passing
 
-### Planned (Phase 5)
+### Phase 5 — Portfolio Polish
 
-| Feature | Description |
-|---------|-------------|
-| Quickstart in 3 comandi | One-liner install + run |
-| Config YAML fully commented | Every line explained |
-| GitHub release | Tagged release, changelog |
-| PyPI publication | `pip install mcp-agora` |
-| PDF architecture diagram | Visual diagram replacing ASCII |
+| Feature | Status |
+|---------|--------|
+| Quickstart in 3 comandi | ✅ One-liner install (`curl \| sh` / `iwr \| iex`) |
+| Config YAML fully commented | ✅ Every field explained |
+| Install scripts | ✅ `scripts/install.ps1` + `scripts/install.sh` |
+| GitHub Actions CI | ✅ Test + lint on push/PR (Ubuntu + Windows) |
+| GitHub release | ✅ v0.4.0 with changelog |
+| PyPI publication | ✅ `pip install mcp-agora` |
+| PDF architecture diagram | 🔲 Visual diagram (WIP) |
 
 ---
 
