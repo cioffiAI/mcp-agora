@@ -1,5 +1,8 @@
 name: CI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: [main, master]
@@ -15,9 +18,9 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v8
         with:
           python-version: "3.13"
           enable-cache: true
