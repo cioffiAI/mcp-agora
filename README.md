@@ -114,19 +114,37 @@ uv run agora
 
 ## Quickstart
 
-### Prerequisites
-
-- Python 3.13+
-- [uv](https://docs.astral.sh/uv/) 0.11+
-
-### Install & Run
+### One-liner install
 
 ```bash
-# Clone
+# Unix (Linux / macOS)
+curl -fsSL https://raw.githubusercontent.com/cioffiAI/mcp-agora/main/scripts/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+iwr -useb https://raw.githubusercontent.com/cioffiAI/mcp-agora/main/scripts/install.ps1 | iex
+```
+
+### Manual install
+
+```bash
+# Prerequisites: Python 3.13+ and uv 0.11+
+#   Unix:  curl -LsSf https://astral.sh/uv/install.sh | sh
+#   Windows: irm https://astral.sh/uv/install.ps1 | iex
+
+# Install from PyPI
+uv tool install mcp-agora
+
+# Run
+agora
+```
+
+### From source
+
+```bash
 git clone https://github.com/cioffiAI/mcp-agora.git
 cd mcp-agora
-
-# Run (auto-creates .venv + installs dependencies)
 uv run agora
 ```
 
