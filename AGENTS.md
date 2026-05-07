@@ -68,7 +68,7 @@ mcp-agora/
 │   ├── embedding/
 │   │   ├── __init__.py
 │   │   ├── base.py          # Abstract EmbeddingProvider + WarmingUpError
-│   │   └── sentence.py      # sentence-transformers wrapper (lazy + background)
+│   │   └── sentence.py      # sentence-transformers wrapper (sync preload, local_files_only, 60s timeout)
 │   ├── memory/
 │   │   ├── __init__.py
 │   │   └── vector_store.py  # ChromaDB PersistentClient wrapper
@@ -143,12 +143,13 @@ def agora_status() -> dict:
 ### Embedding
 
 - Model: `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions)
-- Lazy loading: load model on first call, not on import
-- Background warmup: daemon thread loads model after server starts (non-blocking startup)
-- WarmingUpError: if model still loading, tools return `{"error": "...", "status": "warming_up"}` instead of blocking
+- **Synchronous preload**: model loaded in `create_server()` before `mcp.run()` — blocks startup ~13s, then all calls instant
+- `local_files_only=True` — skips HuggingFace Hub HTTP requests (critical on Windows without `HF_TOKEN`: cuts load from 17-27s to ~13s, avoids rate-limiting)
+- `_ensure_ready()` with 60s wait: safety net if model not ready (e.g. concurrent lazy load); raises `WarmingUpError` only after 60s timeout
 - Non-blocking lock: `threading.Lock.acquire(blocking=False)` — no deadlock on concurrent loads
 - Input limit: 256 word pieces (no chunking)
 - Store `~/.cache/agora/models/`
+- **DO NOT use daemon thread for warmup** — unreliable on Windows subprocess (thread never completes, causes permanent "warming up")
 
 ### ChromaDB
 
@@ -253,6 +254,8 @@ uv run ruff format .
 | STDIO + HTTP connectors | STDIO for local agents, Streamable HTTP for remote |
 | lazy backend connect | No startup cost for idle backends |
 | semantic + exact name router | Exact match tried first, semantic fallback (≥0.5) |
+| sync preload, not daemon thread | Daemon threads unreliable on Windows under subprocess; sync preload guarantees model is ready before mcp.run() |
+| local_files_only=True | Cuts model load from 17-27s to ~13s by skipping HF Hub HTTP; avoids rate-limiting without HF_TOKEN |
 
 ## External MCP Servers
 
@@ -273,6 +276,29 @@ Agora runs via `uv tool install mcp-agora` — the binary is at `~/.local/bin/ag
 - Config: `command: ["agora"]` in `opencode.jsonc`
 - Config file: `~/.agora/config.yaml` (copied from project root on install)
 - Override via: `AGORA_CONFIG=/path/to/config.yaml`
+
+## Troubleshooting
+
+### opencode "Not connected" error
+Known **opencode MCP client bug** (#26128) on Windows. The Agora server itself works fine — verify with manual MCP protocol test:
+```bash
+uv run python -c "import subprocess,json,time;p=subprocess.Popen(['agora.exe'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True);time.sleep(20);p.stdin.write(json.dumps({'jsonrpc':'2.0','id':1,'method':'tools/list','params':{}})+'\n');p.stdin.flush();print(json.loads(p.stdout.readline()));p.terminate()"
+```
+
+### "Server is warming up" after timeout
+The embedding model took >60s to load. Common causes:
+1. HuggingFace Hub rate-limiting (no `HF_TOKEN`) → fix: ensure `local_files_only=True` in sentence.py
+2. First run downloading model → wait longer (subsequent runs use cache at ~13s)
+
+### UV tool install corruption
+`uv tool install --reinstall` can corrupt packages if the uninstall phase times out (leaves packages in inconsistent state, e.g. `transformers.__version__` import error). Solution: always do `uv tool uninstall mcp-agora` first, then `uv tool install .`
+
+### ChromaDB lock / zombie process
+A stale `agora.exe` process holds the SQLite lock on `~/.agora/chroma/`. New instances fail silently. Check:
+```powershell
+Get-Process -Name "agora" -ErrorAction SilentlyContinue
+# Kill if stale: Stop-Process -Name "agora" -Force
+```
 
 ## Related Documents
 
