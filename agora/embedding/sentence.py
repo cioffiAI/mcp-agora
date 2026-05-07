@@ -28,6 +28,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
             self._model = SentenceTransformer(
                 self._model_name,
                 cache_folder=str(_CACHE_DIR),
+                local_files_only=True,
             )
             self._ready.set()
             return True
@@ -39,9 +40,9 @@ class SentenceTransformerProvider(EmbeddingProvider):
             return
         if self._load():
             return
-        if self._ready.wait(timeout=30.0):
+        if self._ready.wait(timeout=60.0):
             return
-        raise WarmingUpError("Embedding model is still loading after 30s, please retry")
+        raise WarmingUpError("Embedding model is still loading after 60s, please retry")
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         self._ensure_ready()
