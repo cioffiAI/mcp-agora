@@ -34,15 +34,22 @@ class SentenceTransformerProvider(EmbeddingProvider):
         finally:
             self._lock.release()
 
+    def _ensure_ready(self):
+        if self._ready.is_set():
+            return
+        if self._load():
+            return
+        if self._ready.wait(timeout=30.0):
+            return
+        raise WarmingUpError("Embedding model is still loading after 30s, please retry")
+
     def embed(self, texts: list[str]) -> list[list[float]]:
-        if not self._ready.is_set() and not self._load():
-            raise WarmingUpError("Embedding model is loading, please retry in a moment")
+        self._ensure_ready()
         vectors = self._model.encode(texts, normalize_embeddings=True)
         return vectors.tolist()
 
     def dimension(self) -> int:
-        if not self._ready.is_set() and not self._load():
-            raise WarmingUpError("Embedding model is loading, please retry in a moment")
+        self._ensure_ready()
         return self._model.get_embedding_dimension()
 
     def warmup(self):
@@ -50,3 +57,6 @@ class SentenceTransformerProvider(EmbeddingProvider):
 
     def is_ready(self) -> bool:
         return self._ready.is_set()
+
+    def ensure_ready(self):
+        self._ensure_ready()

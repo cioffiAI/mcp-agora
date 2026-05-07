@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import threading
 import uuid
 from datetime import UTC, datetime
 
@@ -18,13 +17,12 @@ from agora.registry import BackendRegistry
 from agora.routing.router import Router
 
 
-def create_server(config: Config | None = None, logger: logging.Logger | None = None) -> FastMCP:
+def create_server(config: Config | None = None, logger: logging.Logger | None = None, preload: bool = True) -> FastMCP:
     cfg = config or Config.load()
     log = logger or logging.getLogger("agora.server")
 
     log.info("Initializing embedding provider: %s", cfg.embedding_model)
     embedding = SentenceTransformerProvider(model_name=cfg.embedding_model)
-    log.info("Embedding provider ready (lazy-load, warmup in background)")
 
     vector_store = VectorStore(
         path=str(cfg.resolved_chroma_path),
@@ -54,16 +52,12 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
 
     mcp = FastMCP(cfg.name)
 
-    def _background_warmup():
-        try:
-            embedding.warmup()
-            log.info("Background: embedding model loaded (dim=%d)", embedding.dimension())
-            router.warmup()
-            log.info("Background: router warmed up (%d backend embeddings)", len(router._backend_embeddings))
-        except Exception as e:
-            log.error("Background warmup failed: %s", e, exc_info=True)
-
-    threading.Thread(target=_background_warmup, daemon=True, name="agora-warmup").start()
+    if preload:
+        log.info("Loading embedding model (this may take a moment on first run)...")
+        embedding.warmup()
+        log.info("Embedding model loaded (dim=%d)", embedding.dimension())
+        router.warmup()
+        log.info("Router warmed up (%d backend embeddings)", len(router._backend_embeddings))
 
     @mcp.tool()
     def agora_save(
