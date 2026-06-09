@@ -1,10 +1,8 @@
 import threading
-from pathlib import Path
 
 from agora.embedding.base import EmbeddingProvider, WarmingUpError
 
 _MODEL_NAME = "all-MiniLM-L6-v2"
-_CACHE_DIR = Path.home() / ".cache" / "agora" / "models"
 
 
 class SentenceTransformerProvider(EmbeddingProvider):
@@ -13,6 +11,26 @@ class SentenceTransformerProvider(EmbeddingProvider):
         self._model = None
         self._lock = threading.Lock()
         self._ready = threading.Event()
+
+    def _build_model(self):
+        """Load the model offline-first, downloading it once only if it is not
+        already in the local HuggingFace cache.
+
+        Forcing ``local_files_only=True`` unconditionally raises ``OSError`` on any
+        machine where the model was never cached. That exception used to propagate
+        out of ``create_server()`` and kill the process before ``mcp.run()`` — the
+        root cause of the "server never starts / Not connected" bug. Offline-first
+        keeps the fast, no-network path for normal runs while self-healing on a
+        fresh machine.
+        """
+        from sentence_transformers import SentenceTransformer
+
+        try:
+            return SentenceTransformer(self._model_name, local_files_only=True)
+        except Exception:
+            # Model not in local cache yet → download it once. Subsequent runs are
+            # served from the cache via the offline path above.
+            return SentenceTransformer(self._model_name, local_files_only=False)
 
     def _load(self) -> bool:
         if self._model is not None:
@@ -23,13 +41,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
         try:
             if self._model is not None:
                 return True
-            from sentence_transformers import SentenceTransformer
-
-            self._model = SentenceTransformer(
-                self._model_name,
-                cache_folder=str(_CACHE_DIR),
-                local_files_only=True,
-            )
+            self._model = self._build_model()
             self._ready.set()
             return True
         finally:

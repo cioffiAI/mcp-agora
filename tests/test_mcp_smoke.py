@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -63,6 +64,51 @@ def server_params(mcp_env):
         cwd=str(PROJECT_DIR),
         env={**os.environ, "AGORA_CONFIG": str(mcp_env)},
     )
+
+
+@pytest.fixture(scope="function")
+def server_params_direct(mcp_env):
+    """Spawn the server with the current interpreter (no dependency on `uv`
+    being on PATH), so the startup-responsiveness regression test runs the same
+    whether pytest is launched via `uv run pytest` or the venv python directly."""
+    return StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from agora.main import main; main()"],
+        cwd=str(PROJECT_DIR),
+        env={**os.environ, "AGORA_CONFIG": str(mcp_env)},
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_startup_responds_before_model_loaded(server_params_direct):
+    """Regression for the startup bug: the MCP protocol handshake (initialize)
+    and tools/list MUST respond quickly, BEFORE the heavy embedding model finishes
+    loading (torch + sentence-transformers import alone can take ~60s).
+
+    With synchronous preload, create_server() blocked for ~60s before mcp.run(),
+    so the host's ~32s handshake timeout fired and reported "Not connected".
+    The embedding model must warm up in the background instead.
+    """
+    STARTUP_BUDGET = 25.0  # comfortably under a typical 32s MCP host timeout
+    t0 = time.monotonic()
+    async with stdio_client(server_params_direct) as (read, write):
+        async with ClientSession(read, write) as session:
+            await asyncio.wait_for(session.initialize(), timeout=STARTUP_BUDGET)
+            init_elapsed = time.monotonic() - t0
+            tools = await asyncio.wait_for(session.list_tools(), timeout=STARTUP_BUDGET)
+            # agora_status uses embedding.is_ready() (non-blocking) and must answer
+            # even while the model is still loading in the background.
+            status = json.loads((await session.call_tool("agora_status", arguments={})).content[0].text)
+
+    assert init_elapsed < STARTUP_BUDGET, (
+        f"initialize handshake took {init_elapsed:.1f}s — startup must not block on "
+        f"model loading (it should warm up in the background)"
+    )
+    tool_names = [t.name for t in tools.tools]
+    assert "agora_status" in tool_names
+    assert status["server"] == "Agora"
+    # The model may legitimately still be loading at this point — that's the whole point.
+    assert "ready" in status["embedding"]
 
 
 @pytest.mark.asyncio

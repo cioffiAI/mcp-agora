@@ -143,13 +143,13 @@ def agora_status() -> dict:
 ### Embedding
 
 - Model: `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions)
-- **Synchronous preload**: model loaded in `create_server()` before `mcp.run()` — blocks startup ~13s, then all calls instant
-- `local_files_only=True` — skips HuggingFace Hub HTTP requests (critical on Windows without `HF_TOKEN`: cuts load from 17-27s to ~13s, avoids rate-limiting)
+- **Background warmup (NOT synchronous preload)**: the model is loaded in a FastMCP `lifespan` task via `asyncio.to_thread`, so `mcp.run()` starts and answers `initialize`/`tools/list` immediately. Importing torch + sentence-transformers alone can take 20–60s; doing it synchronously before `mcp.run()` blocked the handshake past the host's ~32s timeout (the "server never starts / Not connected" bug).
+- **Offline-first load with download fallback** (`_build_model`): try `local_files_only=True` first (fast, no network); on failure fall back to `local_files_only=False` to download the model once. NEVER force `local_files_only=True` with no fallback — if the model isn't cached it raises `OSError`, which used to propagate out of `create_server()` and kill the process before `mcp.run()`.
 - `_ensure_ready()` with 60s wait: safety net if model not ready (e.g. concurrent lazy load); raises `WarmingUpError` only after 60s timeout
 - Non-blocking lock: `threading.Lock.acquire(blocking=False)` — no deadlock on concurrent loads
 - Input limit: 256 word pieces (no chunking)
-- Store `~/.cache/agora/models/`
-- **DO NOT use daemon thread for warmup** — unreliable on Windows subprocess (thread never completes, causes permanent "warming up")
+- Model cache: HuggingFace default cache (`~/.cache/huggingface/hub/models--sentence-transformers--all-MiniLM-L6-v2/`). **DO NOT use a custom `cache_folder`** — a non-existent custom dir + `local_files_only=True` fails with OSError.
+- Background warmup runs in a managed worker thread (`asyncio.to_thread`), NOT an unmanaged daemon thread. The old "background warmup is unreliable on Windows" belief was a misdiagnosis: the real cause was the model load hanging on HuggingFace Hub HTTP (no `HF_TOKEN`, rate-limited). Offline-first loading removes that hang.
 
 ### ChromaDB
 
@@ -254,8 +254,8 @@ uv run ruff format .
 | STDIO + HTTP connectors | STDIO for local agents, Streamable HTTP for remote |
 | lazy backend connect | No startup cost for idle backends |
 | semantic + exact name router | Exact match tried first, semantic fallback (≥0.5) |
-| sync preload, not daemon thread | Daemon threads unreliable on Windows under subprocess; sync preload guarantees model is ready before mcp.run() |
-| local_files_only=True | Cuts model load from 17-27s to ~13s by skipping HF Hub HTTP; avoids rate-limiting without HF_TOKEN |
+| background warmup via lifespan + asyncio.to_thread | Heavy torch/sentence-transformers import (20–60s) must NOT block `mcp.run()`, or the host's ~32s handshake times out ("Not connected"). Loading in a worker thread keeps the protocol responsive; tools return "warming up" until ready. |
+| offline-first load with download fallback | `local_files_only=True` first (fast, no network), fall back to download if not cached. Skips HF Hub HTTP on normal runs (avoids rate-limiting without HF_TOKEN) WITHOUT crashing on a fresh machine where the model isn't cached yet. NO custom cache_folder — uses HuggingFace default cache at `~/.cache/huggingface/hub/`. |
 
 ## External MCP Servers
 
@@ -286,9 +286,16 @@ uv run python -c "import subprocess,json,time;p=subprocess.Popen(['agora.exe'],s
 ```
 
 ### "Server is warming up" after timeout
-The embedding model took >60s to load. Common causes:
-1. HuggingFace Hub rate-limiting (no `HF_TOKEN`) → fix: ensure `local_files_only=True` in sentence.py
-2. First run downloading model → wait longer (subsequent runs use cache at ~13s)
+A tool was called before background warmup finished and the model took >60s to become ready. Common causes:
+1. First run downloading the model on a slow link → wait, then retry (subsequent runs load from cache).
+2. Very slow import of torch/sentence-transformers (cold disk, antivirus scanning the venv) → the `_ensure_ready()` 60s budget elapsed. Retry once warm.
+
+### MCP client "connection failed after 32000ms" / "Not connected"
+The MCP host (opencode, Claude Desktop) timed out waiting for `initialize`/`tools/list`. **Root cause of the historical startup bug — two coupled failure modes, both fixed:**
+1. **Blocking startup.** Heavy work (importing torch + sentence-transformers, ~20–60s) ran synchronously in `create_server()` *before* `mcp.run()`, so the protocol handshake never answered within the host's ~32s timeout. Fixed by warming up in a FastMCP `lifespan` background task (`asyncio.to_thread`) — `mcp.run()` now responds immediately.
+2. **Hard crash on missing model.** `SentenceTransformer(..., local_files_only=True)` raised `OSError` whenever the model wasn't in the local HF cache (e.g. fresh machine, or model only ever in a removed custom `cache_folder`), killing the process before `mcp.run()`. Fixed by offline-first loading with a one-time download fallback (`_build_model`).
+
+Regression guard: `tests/test_mcp_smoke.py::test_mcp_startup_responds_before_model_loaded` asserts the handshake answers in <25s while the model is still loading.
 
 ### UV tool install corruption
 `uv tool install --reinstall` can corrupt packages if the uninstall phase times out (leaves packages in inconsistent state, e.g. `transformers.__version__` import error). Solution: always do `uv tool uninstall mcp-agora` first, then `uv tool install .`

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from mcp.server.fastmcp import FastMCP
@@ -50,14 +51,36 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
     router = Router(registry, embedding)
     log.info("Router ready (lazy warmup, %d backends)", len(cfg.backends))
 
-    mcp = FastMCP(cfg.name)
+    @asynccontextmanager
+    async def _lifespan(_server: FastMCP):
+        # Warm up the embedding model in the BACKGROUND. Importing torch +
+        # sentence-transformers and loading the model can take tens of seconds;
+        # doing it synchronously before mcp.run() blocked the MCP protocol
+        # handshake past the host's ~32s timeout ("Not connected"). Running it in
+        # a worker thread keeps the event loop free to answer initialize /
+        # tools/list immediately. Tools called before the model is ready return
+        # the existing "warming up" grace response.
+        warmup_task: asyncio.Task | None = None
+        if preload:
 
-    if preload:
-        log.info("Loading embedding model (this may take a moment on first run)...")
-        embedding.warmup()
-        log.info("Embedding model loaded (dim=%d)", embedding.dimension())
-        router.warmup()
-        log.info("Router warmed up (%d backend embeddings)", len(router._backend_embeddings))
+            async def _warmup() -> None:
+                try:
+                    log.info("Background warmup: loading embedding model (may take a moment on first run)...")
+                    await asyncio.to_thread(embedding.warmup)
+                    log.info("Embedding model loaded (dim=%d)", embedding.dimension())
+                    await asyncio.to_thread(router.warmup)
+                    log.info("Router warmed up (%d backend embeddings)", len(router._backend_embeddings))
+                except Exception:
+                    log.exception("Background warmup failed; tools will report 'warming up' until a retry succeeds")
+
+            warmup_task = asyncio.create_task(_warmup())
+        try:
+            yield {}
+        finally:
+            if warmup_task is not None and not warmup_task.done():
+                warmup_task.cancel()
+
+    mcp = FastMCP(cfg.name, lifespan=_lifespan)
 
     @mcp.tool()
     def agora_save(
