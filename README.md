@@ -12,8 +12,6 @@ uv run agora
 
 ## Features
 
-## Features
-
 ### Phase 1 — Core Memory
 
 - `agora_save` — Save knowledge with semantic embeddings (tags optional)
@@ -21,7 +19,7 @@ uv run agora
 - `agora_status` — Server stats: memory count, agents, cache, backends, health, DB size
 - **Persistent ChromaDB storage** (data survives restarts)
 - **L1 in-memory cache** (TTLCache, 1000 entries, 5min TTL, full-param SHA-256 cache key)
-- **Cache invalidation** on save (clear-all L1+L2, safe strategy)
+- **Cache invalidation** on save and forget (clear-all L1+L2, safe strategy)
 - **Fully local embeddings** (sentence-transformers all-MiniLM-L6-v2, 384d, no API key)
 - **Background warmup** (model loads in daemon thread, server starts instantly)
 - **WarmingUpError grace** (tools return friendly message if model not yet loaded)
@@ -66,7 +64,7 @@ uv run agora
 | Config YAML fully commented | ✅ Every field explained |
 | Install scripts | ✅ `scripts/install.ps1` + `scripts/install.sh` |
 | GitHub Actions CI | ✅ Test + lint on push/PR (Ubuntu + Windows) |
-| GitHub release | ✅ v0.4.1 with changelog |
+| GitHub release | ✅ [v0.4.1](https://github.com/cioffiAI/mcp-agora/releases/tag/v0.4.1) with [changelog](CHANGELOG.md) |
 | PyPI publication | ✅ `pip install mcp-agora` |
 | SVG architecture diagram | ✅ `docs/architecture_en.svg` + `docs/architecture_it.svg` |
 
