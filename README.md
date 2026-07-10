@@ -8,6 +8,12 @@ Agora is a local, Python-only MCP server that gives your AI agents (Claude Code,
 uv run agora
 ```
 
+**v0.4.1** brings important reliability fixes:
+- `agora_forget` now correctly clears both L1 and L2 caches
+- `agora_crossref` (by `entry_id`) now uses direct document lookup instead of searching on the ID string
+
+See the [changelog](CHANGELOG.md) for details.
+
 ---
 
 ## Features
