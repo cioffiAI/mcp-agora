@@ -1,6 +1,9 @@
+import asyncio
 import gc
+import json
 import tempfile
 from datetime import UTC
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +13,7 @@ from agora.config import Config
 from agora.db.database import Database
 from agora.embedding.sentence import SentenceTransformerProvider
 from agora.memory.vector_store import VectorStore
+from agora.server import create_server
 
 
 @pytest.fixture
@@ -147,3 +151,56 @@ def test_save_with_provenance(fresh_server):
     assert prov["source_agent"] == "codex"
     assert prov["source_session"] == "session-abc"
     assert prov["confidence"] == 0.9
+
+
+def test_forget_clears_l1_and_l2_via_real_shipped_tool():
+    """Drive the exact agora_save/query/forget code paths from create_server
+    (shipped implementation) using call_tool. After forget, re-querying the
+    same text that previously hit L2 must be a cache miss (not stale L2 hit
+    containing the deleted entry's content).
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        cdir = Path(tmp) / "chroma"
+        cdir.mkdir(parents=True, exist_ok=True)
+        dbp = str(Path(tmp) / "agora.db")
+        cfg = Config(
+            chroma_path=str(cdir),
+            db_path=dbp,
+            l1_max_entries=10,
+            l1_ttl_seconds=30,
+            l2_max_entries=10,
+            l2_ttl_seconds=3600,
+        )
+        mcp = create_server(config=cfg, preload=False)
+
+        content = "Unique L2 invalidation test content 0xDEADBEEF for forget clear check"
+        q = "Unique L2 invalidation test content"
+
+        # save via real tool fn
+        save_raw = asyncio.run(mcp.call_tool("agora_save", {"content": content, "agent": "testagent"}))
+        saved = json.loads(save_raw[0].text)
+        assert saved.get("saved") is True
+        eid = saved["id"]
+
+        # query to populate L1+L2
+        q1_raw = asyncio.run(mcp.call_tool("agora_query", {"query": q, "top_k": 3}))
+        q1 = json.loads(q1_raw[0].text)
+        assert len(q1.get("results", [])) >= 1
+        assert "0xDEADBEEF" in q1["results"][0]["text"]
+
+        # forget (exercises the fixed path that now clears L2)
+        f_raw = asyncio.run(mcp.call_tool("agora_forget", {"entry_ids": [eid]}))
+        f = json.loads(f_raw[0].text)
+        assert f.get("forgotten", 0) >= 1
+
+        # re-query: must not be L2 hit with stale forgotten content (cached false or no stale text)
+        q2_raw = asyncio.run(mcp.call_tool("agora_query", {"query": q, "top_k": 3}))
+        q2 = json.loads(q2_raw[0].text)
+        # After L2 clear, this must be a fresh (non-L2) result
+        assert q2.get("cached") is False or q2.get("cache_level") != "l2"
+        texts = [r.get("text", "") for r in q2.get("results", [])]
+        assert not any("0xDEADBEEF" in t for t in texts), "stale forgotten content returned from (un-cleared) L2"
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)

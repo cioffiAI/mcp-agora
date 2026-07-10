@@ -13,12 +13,15 @@ from agora.connectors.base import ReadOnlyBlockedError
 from agora.db.database import Database
 from agora.embedding.base import WarmingUpError
 from agora.embedding.sentence import SentenceTransformerProvider
-from agora.memory.vector_store import VectorStore
 from agora.registry import BackendRegistry
 from agora.routing.router import Router
 
 
 def create_server(config: Config | None = None, logger: logging.Logger | None = None, preload: bool = True) -> FastMCP:
+    # Lazy import: defers chromadb (and heavy transitive deps) until server creation.
+    # This keeps bare `import agora.server` cheap; cost paid on first create_server (AC4 / startup priority).
+    from agora.memory.vector_store import VectorStore
+
     cfg = config or Config.load()
     log = logger or logging.getLogger("agora.server")
 
@@ -204,9 +207,12 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
             provenance = db.get_provenance(entry_id)
             if not provenance:
                 return {"error": f"Entry '{entry_id}' not found in provenance", "mode": "entry_id"}
-            single_result = vector_store.query(query_texts=[entry_id], n_results=1)
+            # Direct ID retrieval from collection (not semantic query on the ID string)
+            coll = vector_store.knowledge_collection
+            got = coll.get(ids=[entry_id], include=["documents", "metadatas"])
+            docs = got.get("documents") or []
             source_agent = provenance["source_agent"]
-            entry_text = single_result[0]["text"] if single_result else ""
+            entry_text = docs[0] if docs else ""
             all_results = vector_store.query(query_texts=[entry_text or entry_id], n_results=top_k + 1)
 
             cross_entries = []
@@ -301,6 +307,7 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
         vector_store.delete(ids=to_delete_list)
         db.delete_provenance(to_delete_list)
         l1_cache.clear()
+        l2_cache.clear()
         log.info("agora_forget: deleted %d entries", len(to_delete_list))
         return {"forgotten": len(to_delete_list), "dry_run": False, "entry_ids": to_delete_list}
 
