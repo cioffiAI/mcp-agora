@@ -182,7 +182,7 @@ def agora_status() -> dict:
   ```yaml
   agora:
     name: "Agora"
-    version: "0.4.0"
+    version: "0.4.1"
   storage:
     chroma_path: "~/.agora/chroma"
     db_path: "~/.agora/agora.db"

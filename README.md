@@ -66,7 +66,7 @@ uv run agora
 | Config YAML fully commented | ✅ Every field explained |
 | Install scripts | ✅ `scripts/install.ps1` + `scripts/install.sh` |
 | GitHub Actions CI | ✅ Test + lint on push/PR (Ubuntu + Windows) |
-| GitHub release | ✅ v0.4.0 with changelog |
+| GitHub release | ✅ v0.4.1 with changelog |
 | PyPI publication | ✅ `pip install mcp-agora` |
 | SVG architecture diagram | ✅ `docs/architecture_en.svg` + `docs/architecture_it.svg` |
 
@@ -184,12 +184,12 @@ Call tool: agora_backends
 
 ## Configuration
 
-Default `config.yaml` (v0.4.0):
+Default `config.yaml` (v0.4.1):
 
 ```yaml
 agora:
   name: "Agora"
-  version: "0.4.0"
+  version: "0.4.1"
 
 storage:
   chroma_path: "~/.agora/chroma"
