@@ -212,8 +212,9 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
             got = coll.get(ids=[entry_id], include=["documents", "metadatas"])
             docs = got.get("documents") or []
             source_agent = provenance["source_agent"]
-            entry_text = docs[0] if docs else ""
-            all_results = vector_store.query(query_texts=[entry_text or entry_id], n_results=top_k + 1)
+            # Never fall back to the opaque entry_id as query text (the exact anti-pattern to avoid)
+            entry_text = docs[0] if docs and docs[0] is not None else ""
+            all_results = vector_store.query(query_texts=[entry_text], n_results=top_k + 1) if entry_text else []
 
             cross_entries = []
             for r in all_results:
@@ -443,5 +444,10 @@ def create_server(config: Config | None = None, logger: logging.Logger | None = 
             "db_size_bytes": db.db_size_bytes(),
             "timestamp": datetime.now(UTC).isoformat(),
         }
+
+    # Attach caches for verification / test observability only (allows forcing L1 eviction
+    # to observe real L2 hits + confirm clear on forget). Not a public API or signature change.
+    mcp._agora_l1_cache = l1_cache
+    mcp._agora_l2_cache = l2_cache
 
     return mcp

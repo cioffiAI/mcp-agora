@@ -189,6 +189,15 @@ def test_forget_clears_l1_and_l2_via_real_shipped_tool():
         assert len(q1.get("results", [])) >= 1
         assert "0xDEADBEEF" in q1["results"][0]["text"]
 
+        # Force L1 clear using attached (verification only) so next query hits real L2
+        l1 = getattr(mcp, "_agora_l1_cache", None)
+        if l1:
+            l1.clear()
+        q_l2_raw = asyncio.run(mcp.call_tool("agora_query", {"query": q, "top_k": 3}))
+        q_l2 = json.loads(q_l2_raw[0].text)
+        # Observe explicit L2 hit before forget (cached true / level l2)
+        assert q_l2.get("cached") is True or q_l2.get("cache_level") == "l2"
+
         # forget (exercises the fixed path that now clears L2)
         f_raw = asyncio.run(mcp.call_tool("agora_forget", {"entry_ids": [eid]}))
         f = json.loads(f_raw[0].text)

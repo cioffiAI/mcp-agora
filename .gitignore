@@ -29,6 +29,9 @@ chroma/
 # Model cache
 ~/.cache/agora/
 
+# Captured MCP tool schemas (pre-existing, out of scope for this goal)
+mcps/
+
 # Log files
 *.log
 
