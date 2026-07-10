@@ -198,7 +198,7 @@ async def test_mcp_full_smoke(server_params):
             cr_id = json.loads(crossref_id.content[0].text)
             assert cr_id["mode"] == "entry_id"
             assert cr_id["source_entry_id"] == saved["id"]
-            # Strengthened: cross results are based on actual saved document text (via direct collection.get in _crossref_impl, not query on ID string)
+            # Strengthened: cross results based on actual doc text (direct .get, not ID-as-query)
             cross_entries = cr_id.get("cross_agent_entries", [])
             assert isinstance(cross_entries, list)
             # If crosses exist they derive from real doc text of the entry (e.g. BRIN postgres content)

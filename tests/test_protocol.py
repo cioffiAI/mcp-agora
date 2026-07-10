@@ -212,4 +212,5 @@ def test_forget_clears_l1_and_l2_via_real_shipped_tool():
         assert not any("0xDEADBEEF" in t for t in texts), "stale forgotten content returned from (un-cleared) L2"
     finally:
         import shutil
+
         shutil.rmtree(tmp, ignore_errors=True)
